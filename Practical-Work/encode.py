@@ -170,6 +170,9 @@ if __name__ == '__main__':
     parser.add_argument("--process", help="num process", type=int, default=4)
     parser.add_argument("--da", help="modulation for data augmentation (0-11)", type=int, default=5)
     parser.add_argument("--output", help="output name", required=True)
+    parser.add_argument("--sequence_length", help="Length of the individual sequences", default=4096)
+    parser.add_argument("--chunk_size", help="Amount of sequences in one chunk", default=50000)
+    parser.add_argument("--encode_from_tmp", help="Grap the encodings and chunk them together from already encoded tmp files", default=False)
     args = parser.parse_args()
 
     assert args.dataset == 'lpd_5', 'Dataset required "lpd_5"'
@@ -198,69 +201,72 @@ if __name__ == '__main__':
     # [Bass, Drums, Piano, Guitar, Strings]
     trc_idx = sorted(list(range(trc_len)), key=lambda x: 0 if tracks[x] == 'Bass' else 1)
 
-    pianoroll_files = []
-    note_size = 84
-    note_offset = 24
-    # Set tokens for time_note and end_note
-    time_note = note_size * trc_len + 1
-    end_note = note_size * trc_len + 2
+    if args.encode_from_tmp is False:
+        pianoroll_files = []
+        note_size = 84
+        note_offset = 24
+        # Set tokens for time_note and end_note
+        time_note = note_size * trc_len + 1
+        end_note = note_size * trc_len + 2
 
-    if not os.path.exists(os.path.join('lpd_5', f'trc_avg.pkl')):
-        # Get an average of each pitch value per track over all datapoints
-        trc_avg_c = np.zeros((len(tracks), 2))
-        for file_path in tqdm(glob.glob(dataset_path), desc='Get average pitch value per track over entire dataset. (1/3)'):
-            # Save npz path into list
-            pianoroll_files.append(file_path)
-            # Load it as a multitrack object
-            m = pypianoroll.load(file_path)
-            # Convert it to a numpy array of shape (num_time_steps, num_pitches=128, num_tracks)
-            pr = m.stack()
-            # Transpose the array to have shape (num_time_steps, num_pitches, num_tracks)
-            pr = np.transpose(pr, (1, 2, 0))
-            # Change ordering to get the bass first and have consistent indexing
-            pr = pr[:, :, trc_idx]
-            # Get all time steps of notes being played
-            p = np.where(pr != 0)
-            for i in range(len(p[0])):
-                # Track of the note at timestep i
-                track = p[2][i]
-                # The pitch of the note
-                pitch = p[1][i]
-                # Save them into our array
-                trc_avg_c[track, 0] += pitch
-                trc_avg_c[track, 1] += 1
-            del m, pr, p
+        if not os.path.exists(os.path.join('lpd_5', f'trc_avg.pkl')):
+            # Get an average of each pitch value per track over all datapoints
+            trc_avg_c = np.zeros((len(tracks), 2))
+            for file_path in tqdm(glob.glob(dataset_path), desc='Get average pitch value per track over entire dataset. (1/3)'):
+                # Save npz path into list
+                pianoroll_files.append(file_path)
+                # Load it as a multitrack object
+                m = pypianoroll.load(file_path)
+                # Convert it to a numpy array of shape (num_time_steps, num_pitches=128, num_tracks)
+                pr = m.stack()
+                # Transpose the array to have shape (num_time_steps, num_pitches, num_tracks)
+                pr = np.transpose(pr, (1, 2, 0))
+                # Change ordering to get the bass first and have consistent indexing
+                pr = pr[:, :, trc_idx]
+                # Get all time steps of notes being played
+                p = np.where(pr != 0)
+                for i in range(len(p[0])):
+                    # Track of the note at timestep i
+                    track = p[2][i]
+                    # The pitch of the note
+                    pitch = p[1][i]
+                    # Save them into our array
+                    trc_avg_c[track, 0] += pitch
+                    trc_avg_c[track, 1] += 1
+                del m, pr, p
 
-        # Replace 0 in cur_avg_c[:, 1] with 1
-        # In order to avoid runtime errors
-        trc_avg_c[:, 1] = np.where(trc_avg_c[:, 1] == 0, 1, trc_avg_c[:, 1])
+            # Replace 0 in cur_avg_c[:, 1] with 1
+            # In order to avoid runtime errors
+            trc_avg_c[:, 1] = np.where(trc_avg_c[:, 1] == 0, 1, trc_avg_c[:, 1])
 
-        # Calculate the average note value per track
-        trc_avg = np.where(trc_avg_c[:, 1] > 0, trc_avg_c[:, 0] / trc_avg_c[:, 1], 60)
+            # Calculate the average note value per track
+            trc_avg = np.where(trc_avg_c[:, 1] > 0, trc_avg_c[:, 0] / trc_avg_c[:, 1], 60)
 
-        # Store all the trc avg, as a pickle file since it takes 40min to calculate
-        with open(os.path.join('lpd_5', f'trc_avg.pkl'), mode='wb') as f:
-            pickle.dump(trc_avg, f)
+            # Store all the trc avg, as a pickle file since it takes 40min to calculate
+            with open(os.path.join('lpd_5', f'trc_avg.pkl'), mode='wb') as f:
+                pickle.dump(trc_avg, f)
 
-        del trc_avg_c
-        gc.collect()
+            del trc_avg_c
+            gc.collect()
+        else:
+            print('Get average pitch value per track over entire dataset from file. (1/3)')
+            # Load the pickle file
+            with open(os.path.join('lpd_5', 'trc_avg.pkl'), mode='rb') as f:
+                trc_avg = pickle.load(f)
+            # Search for the file paths with glob
+            pianoroll_files = list(glob.glob(dataset_path))
+
+        # Create a runner class to transfer read only variables to the processes
+        runner = Runner(trc_idx, tracks, args.da, time_note, end_note, note_offset, note_size, trc_avg)
+
+        # Encode the midi files as token encodings
+        results = []
+        with tqdm(total=len(pianoroll_files), desc='Encode midi files as token encoding. (2/3)') as t:
+            with Pool(args.process) as p:
+                for _ in p.imap_unordered(runner.safe_run, pianoroll_files):
+                    t.update(1)
     else:
-        print('Get average pitch value per track over entire dataset from file. (1/3)')
-        # Load the pickle file
-        with open(os.path.join('lpd_5', 'trc_avg.pkl'), mode='rb') as f:
-            trc_avg = pickle.load(f)
-        # Search for the file paths with glob
         pianoroll_files = list(glob.glob(dataset_path))
-
-    # Create a runner class to transfer read only variables to the processes
-    runner = Runner(trc_idx, tracks, args.da, time_note, end_note, note_offset, note_size, trc_avg)
-
-    # Encode the midi files as token encodings
-    results = []
-    with tqdm(total=len(pianoroll_files), desc='Encode midi files as token encoding. (2/3)') as t:
-        with Pool(args.process) as p:
-            for _ in p.imap_unordered(runner.safe_run, pianoroll_files):
-                t.update(1)
 
     numfiles = 0
     chunks = []
@@ -273,27 +279,28 @@ if __name__ == '__main__':
         for note in file_chunk:
             # Fill current sub chunk
             current_chunk.append(note)
-            if len(current_chunk) > 50000:
+            if len(current_chunk) > int(args.sequence_length)-1:
                 # Save full chunk in list
                 chunks.append(np.stack(current_chunk))
                 # Start a new sub chunk
                 current_chunk = []
-        # Save the chunk if its size exceeds 10000 into a file
-        # A chunk with 10000 subchunks of size 50000 will take up around 1000MB in memory
-        # It will take around 0.10 seconds to load it into memory
+        # Save the chunk if its size exceeds, for example, 50000 sequences
+        # A chunk with 50000 sequences of length 4096 will take up around 390MB in memory
+        # It will take around 0.48 seconds to load it into memory
         # Good enough if we load it in a second threat
-        if len(chunks) > 10000:
+        if len(chunks) > int(args.chunk_size):
             # Cast them to uint16 for less memory usage
-            optimized_chunks = [np.array(chunk, dtype=np.uint16) for chunk in chunks]
-            np.savez_compressed(os.path.join(args.output, f'{numfiles:03d}.npz'), *optimized_chunks)
+            optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
+            np.savez_compressed(os.path.join(args.output, f'{numfiles:03d}.npz'), data=optimized_chunks)
             numfiles += 1
             chunks = []
 
     # Save last chunk even if it's not finished yet
-    chunks.append(current_chunk)
+    # Nope, we ignore the last chunk since it would have a different size and could not be stored in our matrix
+    # chunks.append(current_chunk)
     # Cast them to uint16 for less memory usage
-    optimized_chunks = [np.array(chunk, dtype=np.uint16) for chunk in chunks]
-    np.savez_compressed(os.path.join(args.output, f'{numfiles:03d}.npz'), *optimized_chunks)
+    optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
+    np.savez_compressed(os.path.join(args.output, f'{numfiles:03d}.npz'), data=optimized_chunks)
     chunks = []
     # Save the ordering of the tracks
     with open(os.path.join(args.output, 'tracks.trc'), 'w') as f:

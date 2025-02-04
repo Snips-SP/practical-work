@@ -11,11 +11,11 @@ directory_path = 'tmp'
 os.makedirs(directory_path, exist_ok=True)
 
 # Test different sizes of the chunks
-for size in [5000, 10000, 20000]:
+for size in [50000, 100000]:
     # Generate random data with tqdm progress bar
     optimized_chunks = []
     for _ in tqdm(range(size), desc='Generating random chunks'):
-        optimized_chunks.append(np.random.randint(0, 1000, (50001,), dtype=np.uint16))
+        optimized_chunks.append(np.random.randint(0, 1000, (4096,), dtype=np.uint16))
 
     # Save compressed .npz file
     np.savez_compressed(os.path.join(directory_path, f'{size}.npz'), *optimized_chunks)
@@ -38,9 +38,11 @@ for size in [5000, 10000, 20000]:
         print(f"Time taken to load and calculate memory usage: {elapsed_time:.2f} seconds")
         return total_size
 
-
     estimated_size = estimate_npz_memory_with_timing(os.path.join(directory_path, f'{size}.npz'))
     print(f'Estimated memory usage: {estimated_size / (1024 ** 2):.2f} MB')
 
-# 10000 yields around 953MB which seems to be a good compromise between memory usage and I/O activity
-# A load takes around 0.10 seconds
+# 50000 yields around 390MB which seems to be a good compromise between memory usage and I/O activity
+# A load takes around 0.48 seconds
+
+# 100000 yields around 781MB
+# A load takes around 0.85 seconds

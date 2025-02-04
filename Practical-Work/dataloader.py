@@ -6,6 +6,24 @@ import torch
 from torch.utils.data import Dataset
 
 
+class CustomEncodingVocabulary:
+    # Reorder the sequence so that piano is the last instrument
+    # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
+    # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
+    # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
+    # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
+    # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
+
+    tokens: list = []
+
+    def __init__(self):
+        self.tokens.extend(list(range(0, 83)))  # Drum tokens
+        self.tokens.extend(list(range(84, 167)))  # Piano tokens
+        self.tokens.extend(list(range(168, 251)))  # Guitar tokens
+        self.tokens.extend(list(range(252, 335)))  # Bass tokens
+        self.tokens.extend(list(range(336, 419)))  # Strings tokens
+
+
 class GPT2Dataset(Dataset):
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path
@@ -35,7 +53,7 @@ class GPT2Dataset(Dataset):
             self.file_lengths[file_number] = len(chunk)
             self.length += len(chunk)
             if self.max_length is None:
-                self.max_length = len(chunk[chunk.files[0]])
+                self.max_length = chunk[chunk.files[0]].shape[1]
             chunk.close()
 
         # Sort chunk files by their file number
@@ -50,12 +68,13 @@ class GPT2Dataset(Dataset):
         """Load a chunk file by index."""
         file_path = self.chunk_files[file_index]
         chunk = np.load(file_path)
-        data = [chunk[filename] for filename in chunk]
+        data = chunk[chunk.files[0]]
         chunk.close()
         return data
 
     def _preload_next(self, idx):
         """Preload the next file in a separate thread."""
+
         def _worker():
             with self.lock:
                 # Load the file in another thread
@@ -128,7 +147,6 @@ class GPT2RAMDataset(Dataset):
             raise NotADirectoryError(f'The specified dataset path is not a directory: {self.dataset_path}')
 
         for file_path in glob.glob(os.path.join(dataset_path, '*.npz')):
-
             # Load all into ram
             chunk = np.load(file_path)
             self.data.extend([chunk[file] for file in chunk.files])
@@ -178,7 +196,6 @@ for i in range(len(dataset)):
     if i == 10002:
         batch_10002 = batch
 
-
     input_ids = batch[0]
     attention_mask = batch[1]
     # print('Input IDs shape:', input_ids.shape)
@@ -186,6 +203,3 @@ for i in range(len(dataset)):
 
     del input_ids
     del attention_mask
-
-
-
