@@ -15,19 +15,21 @@ class CustomEncodingVocabulary:
     # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
 
     tokens: list = []
+    padding: int = None
 
     def __init__(self):
-        self.tokens.extend(list(range(0, 83)))  # Drum tokens
-        self.tokens.extend(list(range(84, 167)))  # Piano tokens
-        self.tokens.extend(list(range(168, 251)))  # Guitar tokens
-        self.tokens.extend(list(range(252, 335)))  # Bass tokens
-        self.tokens.extend(list(range(336, 419)))  # Strings tokens
+        self.tokens.extend(list(range(0, 83)))  # Drum tokens (0–83)
+        self.tokens.extend(list(range(83, 167)))  # Piano tokens (83–167)
+        self.tokens.extend(list(range(167, 251)))  # Guitar tokens (167–251)
+        self.tokens.extend(list(range(251, 335)))  # Bass tokens (251–335)
+        self.tokens.extend(list(range(335, 419)))  # Strings tokens (335–419)
+
+        self.padding = self.tokens[-1] + 1
 
 
 class GPT2Dataset(Dataset):
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path
-        self.max_length = None
         self.chunk_files = {}
         self.file_lengths = {}
         self.length = 0
@@ -42,22 +44,16 @@ class GPT2Dataset(Dataset):
             raise NotADirectoryError(f'The specified dataset path is not a directory: {self.dataset_path}')
 
         # Load chunk file paths and determine total length
-        for file_path in glob.glob(os.path.join(dataset_path, '*.npz')):
+        for file_number, file_path in enumerate(sorted(glob.glob(os.path.join(dataset_path, '*.npz')))):
             # Extract file number and map it to the file path
-            file_name = os.path.basename(file_path)
-            file_number = int(os.path.splitext(file_name)[0])  # e.g., '01' -> 1
+            file_name = os.path.basename(file_path) # e.g., '01' -> 1
             self.chunk_files[file_number] = file_path
 
             # Get chunk length
             chunk = np.load(file_path)
-            self.file_lengths[file_number] = len(chunk)
-            self.length += len(chunk)
-            if self.max_length is None:
-                self.max_length = chunk[chunk.files[0]].shape[1]
+            self.file_lengths[file_number] = len(chunk[chunk.files[0]])
+            self.length += self.file_lengths[file_number]
             chunk.close()
-
-        # Sort chunk files by their file number
-        self.chunk_files = dict(sorted(self.chunk_files.items()))
 
         # Preload the first two files
         self.current_data = self._load_file(0)
@@ -114,20 +110,11 @@ class GPT2Dataset(Dataset):
 
                 # Return the requested data
                 tokens = self.current_data[file_idx]
-                # Perform padding if needed
-                if len(tokens) < self.max_length:
-                    # Create a padded array of size max_length filled with padding token (e.g., 0)
-                    padded_tokens = np.zeros(self.max_length, dtype=int)
-                    padded_tokens[:len(tokens)] = tokens
-                    mask = np.zeros(self.max_length, dtype=int)
-                    # Set mask to 1 for valid tokens
-                    mask[:len(tokens)] = 1
-                else:
-                    # No padding needed, just use the original tokens
-                    padded_tokens = tokens[:self.max_length]
-                    # Entire mask is 1
-                    mask = np.ones(self.max_length, dtype=int)
-                return padded_tokens, mask
+
+                # Entire mask is 1
+                mask = np.ones(len(tokens), dtype=int)
+
+                return tokens, mask
 
             cumulative_length += file_length
 
@@ -171,35 +158,3 @@ class GPT2RAMDataset(Dataset):
             # Entire mask is 1
             mask = np.ones(self.max_length, dtype=int)
         return padded_tokens, mask
-
-
-dataset = GPT2Dataset('ldp_5_dataset')
-
-# Create a DataLoader from the dataset
-dataloader = torch.utils.data.DataLoader(
-    dataset,
-    batch_size=8,  # Number of samples per batch
-    shuffle=False,  # Shuffle the data
-    num_workers=1,  # Number of subprocesses for data loading
-)
-
-# Iterate through the DataLoader
-for i in range(len(dataset)):
-    print(i)
-
-    if i >= dataset.file_lengths[0]:
-        stop = True
-    batch = dataset.__getitem__(i)
-
-    if i == 0:
-        batch_0 = batch
-    if i == 10002:
-        batch_10002 = batch
-
-    input_ids = batch[0]
-    attention_mask = batch[1]
-    # print('Input IDs shape:', input_ids.shape)
-    # print('Attention Mask shape:', attention_mask.shape)
-
-    del input_ids
-    del attention_mask

@@ -57,7 +57,7 @@ class Runner:
         modulation = [0] + (np.random.permutation(11) + 1).tolist()
 
         current_seq = []
-        # Do data augmentation according to specified parameter "da" in range [0-11]
+        # Do data augmentation according to specified parameter 'da' in range [0-11]
         # All sequences are appended to the same list
         for s in modulation[:self.number_of_modulations + 1]:
             pos = 0
@@ -140,7 +140,7 @@ class Runner:
         # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
         # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
 
-        ### TODO: Something seems wrong here, "# Bass, Piano, etc..., Drums" seems to imply a different ordering
+        ### TODO: Something seems wrong here, '# Bass, Piano, etc..., Drums' seems to imply a different ordering
         cur = []
         for c in sorted(cur_seq):
             # Checks if a note c is not in the range [84, 168)
@@ -166,16 +166,16 @@ class Runner:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", help="source dir", default='lpd_5')
-    parser.add_argument("--process", help="num process", type=int, default=4)
-    parser.add_argument("--da", help="modulation for data augmentation (0-11)", type=int, default=5)
-    parser.add_argument("--output", help="output name", required=True)
-    parser.add_argument("--sequence_length", help="Length of the individual sequences", default=4096)
-    parser.add_argument("--chunk_size", help="Amount of sequences in one chunk", default=50000)
-    parser.add_argument("--encode_from_tmp", help="Grap the encodings and chunk them together from already encoded tmp files", default=False)
+    parser.add_argument('--dataset', help='source dir', default='lpd_5')
+    parser.add_argument('--process', help='num process', type=int, default=4)
+    parser.add_argument('--da', help='modulation for data augmentation (0-11)', type=int, default=5)
+    parser.add_argument('--output', help='output name', required=True)
+    parser.add_argument('--sequence_length', help='Length of the individual sequences', default=4096)
+    parser.add_argument('--chunk_size', help='Amount of sequences in one chunk', default=50000)
+    parser.add_argument('--encode_from_tmp', help='Grap the encodings and chunk them together from already encoded tmp files', default=False)
     args = parser.parse_args()
 
-    assert args.dataset == 'lpd_5', 'Dataset required "lpd_5"'
+    assert args.dataset == 'lpd_5', 'Dataset required lpd_5'
 
     if args.dataset == 'lpd_5':
         tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
@@ -297,6 +297,7 @@ if __name__ == '__main__':
 
     # Save last chunk even if it's not finished yet
     # Nope, we ignore the last chunk since it would have a different size and could not be stored in our matrix
+    ### TODO Implement a padding function for the last sequence in the last chunk
     # chunks.append(current_chunk)
     # Cast them to uint16 for less memory usage
     optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
