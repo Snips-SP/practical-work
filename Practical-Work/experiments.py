@@ -6,6 +6,7 @@ from dataloader import GPT2Dataset, CustomEncodingVocabulary
 import time
 import matplotlib
 import matplotlib.pyplot as plt
+from transformers import GPT2LMHeadModel, GPT2Config
 
 matplotlib.use('TkAgg')
 
@@ -13,46 +14,36 @@ matplotlib.use('TkAgg')
 def test_chunk_sizes():
     # Define the directory path
     directory_path = 'tmp'
+    sequence_length = 1024
 
     # Create the directory
     os.makedirs(directory_path, exist_ok=True)
 
     # Test different sizes of the chunks
-    for size in [50000, 100000]:
+    for size in [50_000, 100_000, 200_000, 400_000]:
         # Generate random data with tqdm progress bar
-        optimized_chunks = []
-        for _ in tqdm(range(size), desc='Generating random chunks'):
-            optimized_chunks.append(np.random.randint(0, 1000, (4096,), dtype=np.uint16))
+        optimized_chunks = np.random.randint(0, 400, (size, sequence_length), dtype=np.uint16)
 
         # Save compressed .npz file
-        np.savez_compressed(os.path.join(directory_path, f'{size}.npz'), *optimized_chunks)
+        np.savez_compressed(os.path.join(directory_path, f'{size}_{sequence_length}.npz'), optimized_chunks)
 
-        # Function to estimate memory usage
-        def estimate_npz_memory_with_timing(file_path):
-            # Time how long it will take to load the file into memory
-            start_time = time.time()
-            chunk = np.load(file_path)
-            end_time = time.time()
+        # Time how long it will take to load the file into memory
+        start_time = time.perf_counter()
+        chunk = np.load(os.path.join(directory_path, f'{size}_{sequence_length}.npz'))
+        end_time = time.perf_counter()
 
-            total_size = 0
-            for key in tqdm(chunk.files, desc='Calculating memory usage'):
-                array = chunk[key]
-                total_size += array.nbytes  # Calculate size in bytes
-            chunk.close()
+        # Calculate size of the content of the chunk in bytes
+        total_size = 0
+        for key in tqdm(chunk.files, desc='Calculating memory usage'):
+            array = chunk[key]
+            total_size += array.nbytes
+        chunk.close()
 
-            elapsed_time = end_time - start_time  # Calculate elapsed time
+        # Calculate elapsed time
+        elapsed_time = end_time - start_time
 
-            print(f"Time taken to load and calculate memory usage: {elapsed_time:.2f} seconds")
-            return total_size
-
-        estimated_size = estimate_npz_memory_with_timing(os.path.join(directory_path, f'{size}.npz'))
-        print(f'Estimated memory usage: {estimated_size / (1024 ** 2):.2f} MB')
-
-    # 50000 yields around 390MB which seems to be a good compromise between memory usage and I/O activity
-    # A load takes around 0.48 seconds
-
-    # 100000 yields around 781MB
-    # A load takes around 0.85 seconds
+        print(f"Load time of chunk from disk: {elapsed_time} seconds")
+        print(f'Estimated memory usage: {total_size / (1024 ** 2):.2f} MB')
 
 
 def dataloader_loading_times():
@@ -80,9 +71,6 @@ def dataloader_loading_times():
 
     print(sorted(token_set))
 
-
-
-
     # Plot the loading times
     plt.figure(figsize=(10, 5))
     plt.plot(loading_times, label="Load Time per Sample", marker="o", linestyle="-")
@@ -96,9 +84,6 @@ def dataloader_loading_times():
     # Its okay that we have the loading spikes at the times where the file switches.
     # In this simulated example we are not processing the sequence in the network
     # which means that the preloading is not even fast enough. But in real application it should work.
-
-
-dataloader_loading_times()
 
 
 def dataloader_tests():
@@ -135,3 +120,38 @@ def custom_vocabulary_test():
 
     tmp = CustomEncodingVocabulary.tokens
     tmp = CustomEncodingVocabulary.padding_token
+
+
+def calculate_model_memory_usage():
+    vocabulary = CustomEncodingVocabulary.tokens
+    padding_token = CustomEncodingVocabulary.padding_token
+
+    print(f'Vocabulary size: {len(vocabulary)}')
+
+    config = GPT2Config(
+        vocab_size=len(vocabulary),  # Size of your vocabulary (adjust to match your tokenizer)
+        n_positions=4096,  # Maximum sequence length
+        n_ctx=1024,  # Context window size
+        n_embd=768,  # Embedding size
+        n_layer=12,  # Number of transformer layers
+        n_head=12,  # Number of attention heads
+        pad_token_id=padding_token,  # Set padding token ID (e.g., same as eos_token)
+    )
+
+    model = GPT2LMHeadModel(config)
+
+    total_params = sum(p.numel() for p in model.parameters())  # Total number of parameters
+    param_size = total_params * 4  # Assuming float32 (4 bytes per parameter)
+
+    print(f"Model parameters size (estimation): {param_size / (1024 ** 2):.2f} MB")  # Convert to MB
+
+    torch.xpu.empty_cache()  # Clear cache to get an accurate reading
+
+    before_mem = torch.xpu.memory_allocated()
+    model.to("xpu")
+    after_mem = torch.xpu.memory_allocated()
+
+    print(f"Model memory usage: {(after_mem - before_mem) / (1024 ** 2):.2f} MB")
+
+
+calculate_model_memory_usage()

@@ -170,8 +170,8 @@ if __name__ == '__main__':
     parser.add_argument('--process', help='num process', type=int, default=4)
     parser.add_argument('--da', help='modulation for data augmentation (0-11)', type=int, default=5)
     parser.add_argument('--output', help='output name', required=True)
-    parser.add_argument('--sequence_length', help='Length of the individual sequences', default=4096)
-    parser.add_argument('--chunk_size', help='Amount of sequences in one chunk', default=50000)
+    parser.add_argument('--sequence_length', help='Length of the individual sequences', default=1024)
+    parser.add_argument('--chunk_size', help='Amount of sequences in one chunk', default=400_000)
     parser.add_argument('--encode_from_tmp',
                         help='Grap the encodings and chunk them together from already encoded tmp files', type=bool,
                         default=False)

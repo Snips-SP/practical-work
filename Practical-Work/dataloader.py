@@ -112,7 +112,7 @@ class GPT2Dataset(Dataset):
                 tokens = self.current_data[file_idx]
 
                 # Entire mask is 1
-                mask = np.ones(len(tokens), dtype=int)
+                mask = np.ones(len(tokens), dtype=tokens.dtype)
 
                 return tokens, mask
 
