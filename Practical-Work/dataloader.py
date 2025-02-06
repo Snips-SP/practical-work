@@ -2,29 +2,29 @@ import threading
 import os
 import glob
 import numpy as np
-import torch
 from torch.utils.data import Dataset
 
 
 class CustomEncodingVocabulary:
-    # Reorder the sequence so that piano is the last instrument
-    # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
-    # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
-    # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
-    # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
-    # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
+    tokens = []
+    padding_token = None
 
-    tokens: list = []
-    padding: int = None
-
-    def __init__(self):
-        self.tokens.extend(list(range(0, 83)))  # Drum tokens (0–83)
-        self.tokens.extend(list(range(83, 167)))  # Piano tokens (83–167)
-        self.tokens.extend(list(range(167, 251)))  # Guitar tokens (167–251)
-        self.tokens.extend(list(range(251, 335)))  # Bass tokens (251–335)
-        self.tokens.extend(list(range(335, 419)))  # Strings tokens (335–419)
-
-        self.padding = self.tokens[-1] + 1
+    @classmethod
+    def initialize(cls):
+        if not cls.tokens:  # Prevent re-initialization
+            # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
+            # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
+            # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
+            # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
+            # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
+            cls.tokens.extend(range(0, 83))  # Drum tokens [0, 83]
+            cls.tokens.extend(range(83, 167))  # Piano tokens [84, 167]
+            cls.tokens.extend(range(167, 251))  # Guitar tokens [168, 251]
+            cls.tokens.extend(range(251, 335))  # Bass tokens [252, 335]
+            cls.tokens.extend(range(335, 419))  # Strings tokens [336, 419]
+            cls.tokens.append(cls.tokens[-1] + 1) ### TODO: What is this token, why is it used, why do I even exist (420)
+            cls.tokens.append(cls.tokens[-1] + 1)  # Add the token which represents a pause in the music (421)
+            cls.padding_token = cls.tokens[-1] + 1  # Add the token which represents the end of the sequence (422)
 
 
 class GPT2Dataset(Dataset):
@@ -46,7 +46,7 @@ class GPT2Dataset(Dataset):
         # Load chunk file paths and determine total length
         for file_number, file_path in enumerate(sorted(glob.glob(os.path.join(dataset_path, '*.npz')))):
             # Extract file number and map it to the file path
-            file_name = os.path.basename(file_path) # e.g., '01' -> 1
+            file_name = os.path.basename(file_path)  # e.g., '01' -> 1
             self.chunk_files[file_number] = file_path
 
             # Get chunk length

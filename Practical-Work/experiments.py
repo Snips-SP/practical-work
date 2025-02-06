@@ -2,10 +2,11 @@ import numpy as np
 from tqdm import tqdm
 import os
 import torch
-from dataloader import GPT2Dataset
+from dataloader import GPT2Dataset, CustomEncodingVocabulary
 import time
 import matplotlib
 import matplotlib.pyplot as plt
+
 matplotlib.use('TkAgg')
 
 
@@ -60,6 +61,9 @@ def dataloader_loading_times():
     # List to store loading times
     loading_times = []
 
+    # Verify that our encoding works
+    token_set = set()
+
     # Iterate through the dataset and measure time
     for i in range(len(dataset)):
         start_time = time.perf_counter()  # Start timing
@@ -68,9 +72,16 @@ def dataloader_loading_times():
 
         end_time = time.perf_counter()  # End timing
 
+        token_set.update(sequence)
+
         loading_times.append(end_time - start_time)  # Store elapsed time
 
         del sequence, mask  # Free memory if needed
+
+    print(sorted(token_set))
+
+
+
 
     # Plot the loading times
     plt.figure(figsize=(10, 5))
@@ -85,6 +96,9 @@ def dataloader_loading_times():
     # Its okay that we have the loading spikes at the times where the file switches.
     # In this simulated example we are not processing the sequence in the network
     # which means that the preloading is not even fast enough. But in real application it should work.
+
+
+dataloader_loading_times()
 
 
 def dataloader_tests():
@@ -102,8 +116,8 @@ def dataloader_tests():
     count = 0
     # Iterate through the DataLoader
     for batch in dataloader:
-
         input_ids = batch[0]
+
         attention_mask = batch[1]
         count += len(input_ids)
 
@@ -116,4 +130,8 @@ def dataloader_tests():
     print(f'Count: {count}')
 
 
-dataloader_tests()
+def custom_vocabulary_test():
+    CustomEncodingVocabulary.initialize()
+
+    tmp = CustomEncodingVocabulary.tokens
+    tmp = CustomEncodingVocabulary.padding_token

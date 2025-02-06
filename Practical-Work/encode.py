@@ -172,7 +172,9 @@ if __name__ == '__main__':
     parser.add_argument('--output', help='output name', required=True)
     parser.add_argument('--sequence_length', help='Length of the individual sequences', default=4096)
     parser.add_argument('--chunk_size', help='Amount of sequences in one chunk', default=50000)
-    parser.add_argument('--encode_from_tmp', help='Grap the encodings and chunk them together from already encoded tmp files', default=False)
+    parser.add_argument('--encode_from_tmp',
+                        help='Grap the encodings and chunk them together from already encoded tmp files', type=bool,
+                        default=False)
     args = parser.parse_args()
 
     assert args.dataset == 'lpd_5', 'Dataset required lpd_5'
@@ -205,14 +207,15 @@ if __name__ == '__main__':
         pianoroll_files = []
         note_size = 84
         note_offset = 24
-        # Set tokens for time_note and end_note
-        time_note = note_size * trc_len + 1
-        end_note = note_size * trc_len + 2
+        # Define the tokens which are used to represent empty notes and the end of a track
+        time_note = note_size * trc_len + 1  # Should be 421
+        end_note = note_size * trc_len + 2  # Should be 422
 
         if not os.path.exists(os.path.join('lpd_5', f'trc_avg.pkl')):
             # Get an average of each pitch value per track over all datapoints
             trc_avg_c = np.zeros((len(tracks), 2))
-            for file_path in tqdm(glob.glob(dataset_path), desc='Get average pitch value per track over entire dataset. (1/3)'):
+            for file_path in tqdm(glob.glob(dataset_path),
+                                  desc='Get average pitch value per track over entire dataset. (1/3)'):
                 # Save npz path into list
                 pianoroll_files.append(file_path)
                 # Load it as a multitrack object
@@ -279,7 +282,7 @@ if __name__ == '__main__':
         for note in file_chunk:
             # Fill current sub chunk
             current_chunk.append(note)
-            if len(current_chunk) > int(args.sequence_length)-1:
+            if len(current_chunk) > int(args.sequence_length) - 1:
                 # Save full chunk in list
                 chunks.append(np.stack(current_chunk))
                 # Start a new sub chunk
