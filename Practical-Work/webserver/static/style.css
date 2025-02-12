@@ -1,0 +1,118 @@
+body {
+    background-color: #0f172a;
+    color: #ffffff;
+    font-family: 'Arial', sans-serif;
+    text-align: center;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+.container {
+    max-width: 600px;
+}
+h1 {
+    font-size: 24px;
+    text-transform: lowercase;
+}
+p {
+    font-size: 14px;
+    color: #a0aec0;
+}
+p span {
+    color: #ffffff;
+    font-style: italic;
+}
+.player {
+    margin-top: 20px;
+}
+.play-button {
+    font-size: 24px;
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+}
+.controls {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-direction: column;
+}
+.controls button {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-size: 18px;
+}
+
+.top-controls {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px; /* Adds some space below */
+}
+
+.bottom-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#chord_progression {
+    background-color: transparent;
+    border: 1px solid white;
+    color: white;
+    padding: 5px;
+    font-size: 16px;
+    width: 200px;
+}
+
+#chord_progression::placeholder {
+    color: white; /* Make the placeholder text white */
+}
+
+audio {
+    display: none;
+}
+
+.volume-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: monospace;
+    font-size: 18px;
+    position: relative;
+}
+
+.volume-bar-container {
+    position: relative;
+    display: inline-block;
+}
+
+#volume-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0; /* Make the slider invisible */
+    cursor: pointer; /* Allow interaction */
+}
+
+#ascii-visualizer {
+    position: fixed;
+    bottom: 0px;
+    left: 0;
+    width: 100%;
+    height: 155px;
+    color: white;
+    font-family: monospace;
+    text-align: center;
+    white-space: pre;
+    padding: 0;
+}
+
+
