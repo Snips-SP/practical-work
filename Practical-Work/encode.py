@@ -12,15 +12,36 @@ from multiprocessing import Pool
 import argparse
 
 
+class EncodingParameters:
+    # All the instruments which are used in our encoding
+    tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
+
+    # The offsets between the instruments and range of notes
+    note_size = 84
+    note_offset = 24
+
+    # Tokens for time note and end note
+    time_note: int = None
+    end_note: int = None
+
+    @classmethod
+    def initialize(cls):
+        if not cls.time_note:  # Prevent re-initialization
+            trc_len = len(cls.tracks)
+            cls.trc_idx = sorted(list(range(trc_len)), key=lambda x: 0 if cls.tracks[x] == 'Bass' else 1)
+
+            cls.time_note = cls.note_size * trc_len + 1
+            cls.end_note = cls.note_size * trc_len + 2
+
+
+# Initialize once
+EncodingParameters.initialize()
+
+
 class Runner:
-    def __init__(self, trc_idx, tracks, number_of_modulations, time_note, end_note, note_offset, note_size, trc_avg):
+    def __init__(self, trc_idx, number_of_modulations, trc_avg):
         self.trc_idx = trc_idx
-        self.tracks = tracks
         self.number_of_modulations = number_of_modulations
-        self.time_note = time_note
-        self.end_note = end_note
-        self.note_offset = note_offset
-        self.note_size = note_size
         self.trc_avg = trc_avg
 
     def _run(self, file_path):
@@ -39,7 +60,7 @@ class Runner:
         # Again get all time steps of notes being played
         p = np.where(pr != 0)
         # Calculate the average pitch of this song per track
-        cur_avg_c = np.zeros((len(self.tracks), 2))
+        cur_avg_c = np.zeros((len(EncodingParameters.tracks), 2))
         for i in range(len(p[0])):
             # Track of the note at timestep i
             track = p[2][i]
@@ -74,7 +95,7 @@ class Runner:
                     # by the instruments
                     for _ in range(pos, p[0][i], step):
                         seq.extend(self._reorder_current(current_seq))
-                        seq.append(self.time_note)
+                        seq.append(EncodingParameters.time_note)
                         current_seq = []
                 # Set current position to the last note occurrence
                 pos = p[0][i]
@@ -107,26 +128,26 @@ class Runner:
                 if pitch > 127:
                     pitch -= 12
                 # Apply our offset ### TODO: Figure out why we need an offset
-                pitch -= self.note_offset
+                pitch -= EncodingParameters.note_offset
 
                 # Do some checks again to ensure that the note is within our interval of wanted notes
                 # [0, note_size (84)]
                 # Since notes above 84 are not used, and we want to keep the dictionary concise
                 if pitch < 0:
                     pitch = 0
-                if pitch > self.note_size:
-                    pitch = self.note_size - 1
+                if pitch > EncodingParameters.note_size:
+                    pitch = EncodingParameters.note_size - 1
 
                 # Finally calculate the number which represents the note track and pitch all together
-                note = track * self.note_size + pitch
+                note = track * EncodingParameters.note_size + pitch
                 # Append it to our current sequence
                 current_seq.append(note)
 
             # Fill in the last note which is played
             seq.extend(self._reorder_current(current_seq))
             # And a last time_note with the end_note as well
-            seq.append(self.time_note)
-            seq.append(self.end_note)
+            seq.append(EncodingParameters.time_note)
+            seq.append(EncodingParameters.end_note)
             current_seq = []
         # Store all the sequences, lists of tokens, as a pickle file
         with open(file_path + '.tmp', mode='wb') as f:
@@ -146,12 +167,12 @@ class Runner:
             # Checks if a note c is not in the range [84, 168)
             # i.e. if the instrument is one of the following
             # Bass, Drums, Guitar, Strings
-            if not (c >= self.note_size and c < self.note_size * 2):
+            if not (c >= EncodingParameters.note_size and c < EncodingParameters.note_size * 2):
                 cur.append(c)
         for c in sorted(cur_seq):
             # Checks if a note c is in the range [84, 168)
             # i.e. if the instrument is piano
-            if (c >= self.note_size and c < self.note_size * 2):
+            if (c >= EncodingParameters.note_size and c < EncodingParameters.note_size * 2):
                 cur.append(c)
 
         return cur  # Bass, Piano, etc..., Drums
@@ -205,12 +226,6 @@ if __name__ == '__main__':
 
     if args.encode_from_tmp is False:
         pianoroll_files = []
-        note_size = 84
-        note_offset = 24
-        # Define the tokens which are used to represent empty notes and the end of a track
-        time_note = note_size * trc_len + 1  # Should be 421
-        end_note = note_size * trc_len + 2  # Should be 422
-
         if not os.path.exists(os.path.join('lpd_5', f'trc_avg.pkl')):
             # Get an average of each pitch value per track over all datapoints
             trc_avg_c = np.zeros((len(tracks), 2))
@@ -260,7 +275,7 @@ if __name__ == '__main__':
             pianoroll_files = list(glob.glob(dataset_path))
 
         # Create a runner class to transfer read only variables to the processes
-        runner = Runner(trc_idx, tracks, args.da, time_note, end_note, note_offset, note_size, trc_avg)
+        runner = Runner(trc_idx, args.da, trc_avg)
 
         # Encode the midi files as token encodings
         results = []
