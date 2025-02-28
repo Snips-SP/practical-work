@@ -5,28 +5,6 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
-class CustomEncodingVocabulary:
-    tokens = []
-    padding_token = None
-
-    @classmethod
-    def initialize(cls):
-        if not cls.tokens:  # Prevent re-initialization
-            # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
-            # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
-            # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
-            # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
-            # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
-            cls.tokens.extend(range(0, 83))  # Drum tokens [0, 83]
-            cls.tokens.extend(range(83, 167))  # Piano tokens [84, 167]
-            cls.tokens.extend(range(167, 251))  # Guitar tokens [168, 251]
-            cls.tokens.extend(range(251, 335))  # Bass tokens [252, 335]
-            cls.tokens.extend(range(335, 419))  # Strings tokens [336, 419]
-            cls.tokens.append(cls.tokens[-1] + 1) ### TODO: What is this token, why is it used, why do I even exist (420)
-            cls.tokens.append(cls.tokens[-1] + 1)  # Add the token which represents a pause in the music (421)
-            cls.padding_token = cls.tokens[-1] + 1  # Add the token which represents the end of the sequence (422)
-
-
 class GPT2Dataset(Dataset):
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path

@@ -1,6 +1,3 @@
-# coding=utf-8
-# This software includes the work that is distributed in the MIT License
-# https://opensource.org/licenses/mit-license.php
 import pypianoroll
 import glob
 import pickle
@@ -10,32 +7,9 @@ from tqdm import tqdm
 import numpy as np
 from multiprocessing import Pool
 import argparse
+from helper import EncodingConfig
 
-
-class EncodingParameters:
-    # All the instruments which are used in our encoding
-    tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
-
-    # The offsets between the instruments and range of notes
-    note_size = 84
-    note_offset = 24
-
-    # Tokens for time note and end note
-    time_note: int = None
-    end_note: int = None
-
-    @classmethod
-    def initialize(cls):
-        if not cls.time_note:  # Prevent re-initialization
-            trc_len = len(cls.tracks)
-            cls.trc_idx = sorted(list(range(trc_len)), key=lambda x: 0 if cls.tracks[x] == 'Bass' else 1)
-
-            cls.time_note = cls.note_size * trc_len + 1
-            cls.end_note = cls.note_size * trc_len + 2
-
-
-# Initialize once
-EncodingParameters.initialize()
+EncodingConfig.initialize()
 
 
 class Runner:
@@ -60,7 +34,7 @@ class Runner:
         # Again get all time steps of notes being played
         p = np.where(pr != 0)
         # Calculate the average pitch of this song per track
-        cur_avg_c = np.zeros((len(EncodingParameters.tracks), 2))
+        cur_avg_c = np.zeros((len(EncodingConfig.tracks), 2))
         for i in range(len(p[0])):
             # Track of the note at timestep i
             track = p[2][i]
@@ -95,7 +69,7 @@ class Runner:
                     # by the instruments
                     for _ in range(pos, p[0][i], step):
                         seq.extend(self._reorder_current(current_seq))
-                        seq.append(EncodingParameters.time_note)
+                        seq.append(EncodingConfig.time_note)
                         current_seq = []
                 # Set current position to the last note occurrence
                 pos = p[0][i]
@@ -128,26 +102,26 @@ class Runner:
                 if pitch > 127:
                     pitch -= 12
                 # Apply our offset ### TODO: Figure out why we need an offset
-                pitch -= EncodingParameters.note_offset
+                pitch -= EncodingConfig.note_offset
 
                 # Do some checks again to ensure that the note is within our interval of wanted notes
                 # [0, note_size (84)]
                 # Since notes above 84 are not used, and we want to keep the dictionary concise
                 if pitch < 0:
                     pitch = 0
-                if pitch > EncodingParameters.note_size:
-                    pitch = EncodingParameters.note_size - 1
+                if pitch > EncodingConfig.note_size:
+                    pitch = EncodingConfig.note_size - 1
 
                 # Finally calculate the number which represents the note track and pitch all together
-                note = track * EncodingParameters.note_size + pitch
+                note = track * EncodingConfig.note_size + pitch
                 # Append it to our current sequence
                 current_seq.append(note)
 
             # Fill in the last note which is played
             seq.extend(self._reorder_current(current_seq))
             # And a last time_note with the end_note as well
-            seq.append(EncodingParameters.time_note)
-            seq.append(EncodingParameters.end_note)
+            seq.append(EncodingConfig.time_note)
+            seq.append(EncodingConfig.end_note)
             current_seq = []
         # Store all the sequences, lists of tokens, as a pickle file
         with open(file_path + '.tmp', mode='wb') as f:
@@ -167,12 +141,12 @@ class Runner:
             # Checks if a note c is not in the range [84, 168)
             # i.e. if the instrument is one of the following
             # Bass, Drums, Guitar, Strings
-            if not (c >= EncodingParameters.note_size and c < EncodingParameters.note_size * 2):
+            if not (c >= EncodingConfig.note_size and c < EncodingConfig.note_size * 2):
                 cur.append(c)
         for c in sorted(cur_seq):
             # Checks if a note c is in the range [84, 168)
             # i.e. if the instrument is piano
-            if (c >= EncodingParameters.note_size and c < EncodingParameters.note_size * 2):
+            if (c >= EncodingConfig.note_size and c < EncodingConfig.note_size * 2):
                 cur.append(c)
 
         return cur  # Bass, Piano, etc..., Drums

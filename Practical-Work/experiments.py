@@ -2,11 +2,13 @@ import numpy as np
 from tqdm import tqdm
 import os
 import torch
-from dataloader import GPT2Dataset, CustomEncodingVocabulary
+from dataloader import GPT2Dataset
 import time
 import matplotlib
 import matplotlib.pyplot as plt
 from transformers import GPT2LMHeadModel, GPT2Config
+from helper import EncodingConfig
+EncodingConfig.initialize()
 
 matplotlib.use('TkAgg')
 
@@ -116,15 +118,15 @@ def dataloader_tests():
 
 
 def custom_vocabulary_test():
-    CustomEncodingVocabulary.initialize()
+    EncodingConfig.initialize()
 
-    tmp = CustomEncodingVocabulary.tokens
-    tmp = CustomEncodingVocabulary.padding_token
+    tmp = EncodingConfig.tokens
+    tmp = EncodingConfig.padding_token
 
 
 def calculate_model_memory_usage():
-    vocabulary = CustomEncodingVocabulary.tokens
-    padding_token = CustomEncodingVocabulary.padding_token
+    vocabulary = EncodingConfig.tokens
+    padding_token = EncodingConfig.padding_token
 
     print(f'Vocabulary size: {len(vocabulary)}')
 

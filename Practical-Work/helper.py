@@ -1,8 +1,46 @@
 import os
 import re
-from encode import EncodingParameters
 
-EncodingParameters.initialize()
+
+class EncodingConfig:
+    # List of all used tokens (excluding padding token)
+    tokens: list = []
+    # Token used for padding
+    padding_token: int = None
+    # The length of all tokens (tokens and padding)
+    vocab_size: int = None
+
+    # All the instruments which are used in our encoding
+    tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
+
+    # The offsets between the instruments and range of notes
+    note_size: int = 84
+    note_offset: int = 24
+
+    # Tokens for time note and end note
+    time_note: int = None
+    end_note: int = None
+
+    # List with prioritised index where Bass is placed in front
+    trc_idx: list = None
+
+    @classmethod
+    def initialize(cls):
+        if not cls.tokens:  # Prevent re-initialization
+            # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
+            # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
+            # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
+            # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
+            # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
+            cls.tokens.extend(range(0, 420))
+            cls.time_note = cls.tokens[-1] + 1
+            cls.tokens.append(cls.time_note)  # Add the token which represents a pause in the music (420)
+            cls.end_note = cls.tokens[-1] + 1
+            cls.tokens.append(cls.end_note)  # Add the token which represents the end of the sequence (421)
+            cls.padding_token = cls.tokens[-1] + 1  # Add the padding token to the mix (422)
+            cls.vocab_size = cls.padding_token
+
+            cls.trc_idx = sorted(list(range(len(cls.tracks))), key=lambda x: 0 if cls.tracks[x] == 'Bass' else 1)
 
 
 # Function to get the next available index for a new run folder
@@ -31,7 +69,7 @@ def get_next_run_folder(name, base_dir='runs'):
 
 def chord2tokens(chord):
     if chord is None or chord == 'auto':
-        return [EncodingParameters.time_note]
+        return [EncodingConfig.time_note]
     else:
         base = ['E', 'F', 'G', 'A', 'B', 'C', 'D'].index(chord[0])
         basenote = [4, 5, 7, 9, 11, 12, 14][base]  # Bass
@@ -39,7 +77,7 @@ def chord2tokens(chord):
         if len(chord) > 1 and chord[1] == '#':
             basenote += 1
             chordtype = chord[2:]
-        offset = basenote + EncodingParameters.note_size * 2 + 24  # Piano notes
+        offset = basenote + EncodingConfig.note_size * 2 + 24  # Piano notes
         if len(chordtype) == 0:
             return [basenote, offset, offset + 4, offset + 7]
         elif chordtype == 'm':
