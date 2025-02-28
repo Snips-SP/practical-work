@@ -74,6 +74,7 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
             if note == EncodingConfig.time_note:
                 # We have hit a time note, thus we have to advance to the next 1/16th note in the song
                 if timings[timings_pos] == 0:
+                    timings_pos += 1
                     # The chord was repeated the correct amount of times
                     # Time for a chord change, which means we generate new sequence from our context plus the new chord
                     chord = tokens.pop(0)
@@ -89,6 +90,10 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
                     # We take notes from the same sequence generated earlier
                     # We assume that the network will not just switch chord on it own in such a quick manner
                     timings[timings_pos] -= 1
+                # Either way update the position by 1
+                pos += 1
+                if pos >= pianoroll.shape[1]:
+                    break
             elif note < EncodingConfig.time_note:
                 # We have hit an actually generated note, thus we put it into its right place in our pianoroll array
                 # Calculate which track the note belongs to
@@ -101,8 +106,8 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
 
     pr = []
     for i, (t, p) in enumerate(zip(EncodingConfig.tracks, [0, 0, 24, 32, 40])):
-        pr.append(pypianoroll.Track(pianoroll=pianoroll[i], program=p, is_drum=(t == 'Drums')))
-    mt = pypianoroll.Multitrack(tracks=pr, tempo=tempo, beat_resolution=4)
+        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=p, is_drum=(t == 'Drums')))
+    mt = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=4)
     mt.write(output)
 
 

@@ -11,3 +11,5 @@
 /choco-main/
 /Practical-Work/runs/
 /Practical-Work/tmp/
+/Practical-Work/output.mid
+/Practical-Work/gpt_model_state_dict.ph
