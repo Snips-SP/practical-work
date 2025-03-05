@@ -1,5 +1,8 @@
 import os
 import re
+import subprocess
+from pydub import AudioSegment
+from pydub.silence import split_on_silence
 
 
 class EncodingConfig:
@@ -12,6 +15,13 @@ class EncodingConfig:
 
     # All the instruments which are used in our encoding
     tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
+    programs = {
+        'Drums': 0,  # Program is not important here since we set the flag is_drum when creating a track
+        'Piano': 0,  # Program for Acoustic Grand Piano
+        'Guitar': 32,  # Program for 32 for Electric Guitar
+        'Bass': 35,  # Program for Electric Bass (picked)
+        'Strings': 49  # Program for String Ensemble 1
+    }
 
     # The offsets between the instruments and range of notes
     note_size: int = 84
@@ -65,6 +75,42 @@ def get_next_run_folder(name, base_dir='runs'):
     new_run_path = os.path.join(base_dir, new_run_name)
 
     return new_run_path
+
+
+def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
+    assert os.path.isfile(mid_file), 'Mid file not found'
+    assert os.path.isfile(sf2_file), 'sf2 file not found'
+
+    # Create temporary wav file
+    tmp_wav = 'tmp.wav'
+    subprocess.run(["fluidsynth", "-ni", sf2_file, mid_file, "-F", tmp_wav])
+
+    # Convert wav to mp3
+    audio = AudioSegment.from_wav(tmp_wav)
+
+    # TODO:
+    # FluidSynth created long periods of silence after the notes of the mid file have finished playing
+    # I cannot figure out why this is happening but I will just remove it during the conversion to mp3
+
+    # Parameters for silence detection
+    # Silence threshold in dBFS
+    silence_thresh = audio.dBFS - 14
+    # Minimum silence duration in milliseconds
+    min_silence_len = 500
+
+    # Split the audio based on silence
+    segments = split_on_silence(audio, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
+
+    # Join all non-silent segments
+    trimmed_audio = segments[0]  # Start with the first segment
+
+    for segment in segments[1:]:
+        trimmed_audio += segment  # Concatenate the segments back together
+
+    trimmed_audio.export(output_file, format='mp3')
+
+    # Delete tmp wav file
+    os.remove(tmp_wav)
 
 
 def chord2tokens(chord):

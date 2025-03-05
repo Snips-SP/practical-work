@@ -25,7 +25,7 @@ def generate_from_context(model, context, device):
     return new_tokens.numpy()
 
 
-def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int, output: str = 'output.mid'):
+def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,  model_path: str, output: str = 'output.mid'):
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
@@ -35,7 +35,7 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
     assert np.sum(timings) // 16 == num_bars, 'Chord timings dont add up to number of bars'
 
     model = GPT2LMHeadModel(NetworkConfig.config)
-    model.load_state_dict(torch.load('gpt_model_state_dict.ph', weights_only=True, map_location=device))
+    model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
     model.to(device)
 
     # Encode chords into tokens
@@ -105,10 +105,11 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
                     pianoroll[trc, pos, mid] = 100
 
     pr = []
-    for i, (t, p) in enumerate(zip(EncodingConfig.tracks, [0, 0, 24, 32, 40])):
-        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=p, is_drum=(t == 'Drums')))
+    for i, t in enumerate(EncodingConfig.tracks):
+        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t], is_drum=(t == 'Drums')))
     mt = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=4)
+
     mt.write(output)
 
+    return output
 
-generate_from_chords(['F', 'D', 'B'], [16, 32, 16], 4, 80)

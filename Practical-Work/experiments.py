@@ -7,10 +7,26 @@ import time
 import matplotlib
 import matplotlib.pyplot as plt
 from transformers import GPT2LMHeadModel, GPT2Config
-from helper import EncodingConfig
+from helper import EncodingConfig, mid_to_mp3
+from generate import generate_from_chords
 EncodingConfig.initialize()
 
 matplotlib.use('TkAgg')
+
+
+def testing_generation():
+    mid_location = generate_from_chords(['A', 'D', 'F'],
+                                        [16, 32, 16],
+                                        4,
+                                        80,
+                                        'tmp/gpt_model_state_dict.ph',
+                                        'tmp/output.mid')
+    print('gen fin')
+
+
+def testing_conversion():
+    mid_to_mp3('tmp/output.mid', 'tmp/FluidR3_GM_GS.sf2', 'tmp/output.mp3')
+    print('convert fin')
 
 
 def test_chunk_sizes():
@@ -154,6 +170,3 @@ def calculate_model_memory_usage():
     after_mem = torch.xpu.memory_allocated()
 
     print(f"Model memory usage: {(after_mem - before_mem) / (1024 ** 2):.2f} MB")
-
-
-calculate_model_memory_usage()
