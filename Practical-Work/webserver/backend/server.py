@@ -32,10 +32,9 @@ def generate_music():
     # Get chords from the user
     chords = request.json.get('chord_progression', [])
 
-    # TODO
-    # Bring chords into the right format
-    # Make timings available to user somehow
-    # Make tempo available as well
+    # Bring chords into right format
+    # From A|B|C|D -> [A, B, C, D]
+    chords = chords.split('|')
 
     # Get right folder for user
     session_dir = os.path.join('static', 'music', user_id)
