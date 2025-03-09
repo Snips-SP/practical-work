@@ -1,9 +1,9 @@
-from helper import chord2tokens
+from .helper import chord2tokens
+from .train import NetworkConfig
+from .helper import EncodingConfig
 import numpy as np
 import torch
 from transformers import GPT2LMHeadModel
-from train import NetworkConfig
-from helper import EncodingConfig
 import pypianoroll
 
 

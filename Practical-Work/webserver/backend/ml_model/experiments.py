@@ -1,14 +1,14 @@
+from .helper import EncodingConfig, mid_to_mp3
+from .generate import generate_from_chords
+from .dataloader import GPT2Dataset
 import numpy as np
 from tqdm import tqdm
 import os
 import torch
-from dataloader import GPT2Dataset
 import time
 import matplotlib
 import matplotlib.pyplot as plt
 from transformers import GPT2LMHeadModel, GPT2Config
-from helper import EncodingConfig, mid_to_mp3
-from generate import generate_from_chords
 EncodingConfig.initialize()
 
 matplotlib.use('TkAgg')

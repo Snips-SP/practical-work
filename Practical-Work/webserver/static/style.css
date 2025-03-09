@@ -115,4 +115,50 @@ audio {
     padding: 0;
 }
 
+#loading-spinner {
+    font-size: 20px;
+    text-align: center;
+    margin: 20px 0;
+}
 
+#dropdown-container {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #0f172a;
+    color: white;
+    padding: 5px;
+    border: 1px solid white;
+    cursor: pointer;
+}
+
+#dropdown-button {
+    background: #0f172a;
+    color: white;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+#dropdown-menu {
+    list-style: none;
+    padding: 5px;
+    margin: 0;
+    background: #0f172a;
+    border: 1px solid white;
+    display: none;
+    position: absolute;
+    top: 30px;
+    right: 0;
+    min-width: 120px;
+}
+
+#dropdown-menu li {
+    padding: 5px;
+    cursor: pointer;
+}
+
+#dropdown-menu li:hover {
+    background: white;
+    color: #0f172a;
+}

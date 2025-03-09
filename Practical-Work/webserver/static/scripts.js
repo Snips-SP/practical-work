@@ -5,6 +5,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const generateButton = document.getElementById('generate-button')
     const volumeSlider = document.getElementById('volume-slider')
     const volumeDisplay = document.getElementById('volume-display');
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const dropdownMenu = document.getElementById('dropdown-menu');
+    const dropdownButton = document.getElementById('dropdown-button');
     const skipButton = document.querySelector('.skip');
 
     audioPlayer.volume = volumeSlider.value;
@@ -28,8 +31,68 @@ document.addEventListener('DOMContentLoaded', function () {
     // Initialize display
     updateVolumeBar();
 
+    // Play selected from textbox
+    function playSong(song) {
+        fetch(`/play-song?song=${encodeURIComponent(song)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.audio_url) {
+                    // Play selected song
+                    audioPlayer.src = data.audio_url;
+                    audioPlayer.play();
+                    // Update the text displaying the current song name
+                    document.getElementById('textbox').textContent = song;
+                }
+            })
+            .catch(error => console.error('Error playing song:', error));
+    }
+
+    function fetchSongList() {
+    fetch('/get-songs')
+        .then(response => response.json())
+        .then(data => {
+            dropdownMenu.innerHTML = ''; // Clear previous entries
+            data.songs.forEach(song => {
+                let listItem = document.createElement('li');
+                listItem.textContent = song;
+                listItem.addEventListener('click', function () {
+                    playSong(song);
+                });
+                dropdownMenu.appendChild(listItem);
+            });
+            dropdownMenu.style.display = 'block'; // Show dropdown
+        })
+        .catch(error => console.error('Error fetching songs:', error));
+    }
+
+    // Toggle dropdown on click
+    dropdownButton.addEventListener('click', function () {
+        if (dropdownMenu.style.display === 'block') {
+            dropdownMenu.style.display = 'none';
+        } else {
+            fetchSongList();
+        }
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', function (event) {
+        if (!dropdownButton.contains(event.target) && !dropdownMenu.contains(event.target)) {
+            dropdownMenu.style.display = 'none';
+        }
+    });
+
     generateButton.addEventListener('click', function () {
         const chord_progression_value = document.getElementById('chord_progression').value;
+
+        // Show loading spinner
+        loadingSpinner.style.display = 'block';
+
+        let spinnerFrames = ['[|]', '[/]', '[-]', '[\\]'];
+        let frameIndex = 0;
+        let spinnerInterval = setInterval(() => {
+            loadingSpinner.textContent = spinnerFrames[frameIndex];
+            frameIndex = (frameIndex + 1) % spinnerFrames.length;
+        }, 200); // Change frame every 200ms
 
         fetch('/generate-music', {
             method: 'POST',
@@ -42,11 +105,19 @@ document.addEventListener('DOMContentLoaded', function () {
             .then(response => response.json())
             .then(data => {
                 if (data.audio_url) {
-                    document.getElementById('audio-player').src = data.audio_url;
-                    document.getElementById('audio-player').play();
+                    // Play newly generated song
+                    audioPlayer.src = data.audio_url;
+                    audioPlayer.play();
+                    // Update the text displaying the current song name
+                    document.getElementById('textbox').textContent = data.song_name;
                 }
             })
-            .catch(error => console.error('Error:', error));
+            .catch(error => console.error('Error:', error))
+            .finally(() => {
+            // Stop and hide spinner
+            clearInterval(spinnerInterval);
+            loadingSpinner.style.display = 'none';
+        });
     });
 
     playButton.addEventListener('click', function () {

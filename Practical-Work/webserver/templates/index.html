@@ -9,12 +9,23 @@
 <body>
     <div class="container">
         <h1>Backing track generator</h1>
-        <p>Notes to chill and practice to</p>
+
+        <!-- Dropdown Menu (Top Right) -->
+        <div id="dropdown-container">
+            <button id="dropdown-button">\/ Songs</button>
+            <ul id="dropdown-menu" style="display: none;"></ul>
+        </div>
+
+        <p id="textbox">Notes to chill and practice to</p>
+
+        <pre id="loading-spinner" style="display: none;">[|]</pre>
+
         <div class="player">
             <audio id="audio-player"></audio>
             <div class="controls">
                 <div class="top-controls">
                     <button id="generate-button">Gen</button>
+
                     <input type="text" id="chord_progression" placeholder="Enter chord progression...">
                 </div>
                 <div class="bottom-controls">

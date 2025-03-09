@@ -1,12 +1,11 @@
 import os.path
-
 from flask import Flask, render_template, jsonify, session, request
 import uuid
-from ...generate import generate_from_chords
-from ...helper import mid_to_mp3
+from .ml_model.generate import generate_from_chords
+from .ml_model.helper import mid_to_mp3
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
-app.secret_key = 'your_secret_key'  # Set a secret key for session management
+app.secret_key = 'secret_keyyyy'
 
 
 @app.before_request
@@ -21,43 +20,87 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/play-song', methods=['GET'])
+def play_song():
+    # Check for the song in the user session and get its full path
+    song = request.args.get('song')
+    if song:
+        user_id = session.get('user_id')
+        # Check 
+        if user_id is None:
+            return jsonify({'error': 'Session expired or invalid'}), 401
+
+        session_dir = os.path.join('static', 'music', user_id)
+        # Get generated songs from user
+        songs = [os.path.splitext(f)[0] for f in os.listdir(session_dir) if f.endswith('.mp3')]
+        # Check if the song exists
+        if song not in songs:
+            return jsonify({'error': 'No song found'}), 400
+        # Create full song path
+        full_song_path = os.path.join(session_dir, f'{song}.mp3')
+
+        return jsonify({'audio_url': full_song_path})
+
+    return jsonify({'error': 'No song found'}), 400
+
+
+@app.route('/get-songs', methods=['GET'])
+def get_songs():
+    # Get a list of all songs in the current user directory
+    user_id = session.get('user_id')
+    if user_id is None:
+        return jsonify({'error': 'Session expired or invalid'}), 401
+
+    session_dir = os.path.join('static', 'music', user_id)
+    # Get all songs without their extension
+    songs = [os.path.splitext(f)[0] for f in os.listdir(session_dir) if f.endswith('.mp3')]
+
+    return jsonify({'songs': songs})
+
+
 @app.route('/generate-music', methods=['POST'])
 def generate_music():
-    # You can access the session variable here
     user_id = session.get('user_id')
 
     if user_id is None:
         return jsonify({'error': 'Session expired or invalid'}), 401
 
     # Get chords from the user
-    chords = request.json.get('chord_progression', [])
+    textbox = request.json.get('chord_progression', [])
 
     # Bring chords into right format
-    # From A|B|C|D -> [A, B, C, D]
-    chords = chords.split('|')
+    # From A:16|B:32|C:16|D:8 -> [A, B, C, D], [16, 32, 16, 8]
+    chords = []
+    timings = []
+    for chord_timing in textbox.split('|'):
+        chord, timing = chord_timing.split(':')
+        chords.append(chord)
+        timings.append(int(timing))
 
     # Get right folder for user
     session_dir = os.path.join('static', 'music', user_id)
     os.makedirs(session_dir, exist_ok=True)
     # Get generated songs from user
     contents = os.listdir(session_dir)
-    new_song_path = os.path.join(session_dir, f'Song_{len(contents)+1}.mp3')
+    current_song_name = f'Song_{len(contents) + 1}'
+    new_song_path = os.path.join(session_dir, f'{current_song_name}.mp3')
 
     # Generate midi file
-    tmp_mid_file = os.path.join('tmp', f'{user_id}_tmp.mid')
-    generate_from_chords(['A', 'D', 'F'],
-                         [16, 32, 16],
-                         4,
+    tmp_mid_file = os.path.join('backend', 'tmp', f'{user_id}_tmp.mid')
+    generate_from_chords(chords,
+                         timings,
+                         int(sum(timings) / 16),
                          80,
-                         'gpt_model_state_dict.ph',
+                         os.path.join('backend', 'gpt_model_state_dict.ph'),
                          tmp_mid_file)
     # Trim and convert to mp3
     mid_to_mp3(tmp_mid_file,
-               'FluidR3_GM_GS.sf2',
+               os.path.join('backend', 'FluidR3_GM_GS.sf2'),
                new_song_path)
     os.remove(tmp_mid_file)
 
-    return jsonify({'audio_url': new_song_path})
+    return jsonify({'audio_url': new_song_path,
+                    'song_name': current_song_name})
 
 
 def run():

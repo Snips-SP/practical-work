@@ -1,3 +1,4 @@
+from .helper import EncodingConfig
 import pypianoroll
 import glob
 import pickle
@@ -7,8 +8,6 @@ from tqdm import tqdm
 import numpy as np
 from multiprocessing import Pool
 import argparse
-from helper import EncodingConfig
-
 EncodingConfig.initialize()
 
 

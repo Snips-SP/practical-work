@@ -83,7 +83,7 @@ def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
 
     # Create temporary wav file
     tmp_wav = 'tmp.wav'
-    subprocess.run(["fluidsynth", "-ni", sf2_file, mid_file, "-F", tmp_wav])
+    subprocess.run(["fluidsynth", "-qni", sf2_file, mid_file, "-F", tmp_wav])
 
     # Convert wav to mp3
     audio = AudioSegment.from_wav(tmp_wav)

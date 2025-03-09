@@ -1,13 +1,14 @@
+from .dataloader import GPT2Dataset
+from .helper import get_next_run_folder, EncodingConfig
 from transformers import GPT2LMHeadModel, GPT2Config, get_scheduler
 from torch import nn
 from tqdm import tqdm
 from torch.optim import AdamW
 import torch
-from dataloader import GPT2Dataset
 import os
 from torch.utils.tensorboard import SummaryWriter
 import math
-from helper import get_next_run_folder, EncodingConfig
+
 EncodingConfig.initialize()
 
 
