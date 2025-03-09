@@ -1,5 +1,3 @@
-/Practical-Work/lpd_5/
-/Practical-Work/ldp_5_dataset/
 /choco-main.zip
 /chord2melody-main.zip
 /CP_Drums_Generation-main.zip
@@ -15,3 +13,7 @@
 /Practical-Work/gpt_model_state_dict.ph
 /Practical-Work/webserver/backend/FluidR3_GM_GS.sf2
 /Practical-Work/webserver/backend/gpt_model_state_dict.ph
+/Practical-Work/webserver/backend/ml_model/ldp_5_dataset/
+/Practical-Work/webserver/backend/ml_model/lpd_5/
+/Practical-Work/webserver/backend/ml_model/runs/
+/Practical-Work/webserver/backend/ml_model/tmp/
