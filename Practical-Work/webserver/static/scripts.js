@@ -8,7 +8,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const loadingSpinner = document.getElementById('loading-spinner');
     const dropdownMenu = document.getElementById('dropdown-menu');
     const dropdownButton = document.getElementById('dropdown-button');
-    const skipButton = document.querySelector('.skip');
+    const skipButton = document.getElementById('skip')
+    const currentTimeDisplay = document.getElementById('currentTime');
+    const totalTimeDisplay = document.getElementById('totalTime');
 
     audioPlayer.volume = volumeSlider.value;
     audioPlayer.loop = true;
@@ -132,5 +134,21 @@ document.addEventListener('DOMContentLoaded', function () {
 
     skipButton.addEventListener('click', function () {
         audioPlayer.currentTime += 10; // Skip forward 10 seconds
+    });
+    
+    function formatTime(seconds) {
+        const min = Math.floor(seconds / 60);
+        const sec = Math.floor(seconds % 60);
+        return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+    }
+
+    // Update duration when metadata is loaded
+    audioPlayer.addEventListener('loadedmetadata', () => {
+        totalTimeDisplay.textContent = formatTime(audioPlayer.duration);
+    });
+    
+    // Update current time as the song plays
+    audioPlayer.addEventListener('timeupdate', () => {
+        currentTimeDisplay.textContent = formatTime(audioPlayer.currentTime);
     });
 });
