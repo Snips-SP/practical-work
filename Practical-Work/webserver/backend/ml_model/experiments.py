@@ -1,5 +1,5 @@
 from .helper import EncodingConfig, mid_to_mp3
-from .generate import generate_from_chords
+from .generate import generate_from_chords, sliding_window_generate
 from .dataloader import GPT2Dataset
 import numpy as np
 from tqdm import tqdm
@@ -15,19 +15,21 @@ matplotlib.use('TkAgg')
 
 
 def testing_generation():
-    mid_location = generate_from_chords(['A', 'D', 'F'],
-                                        [16, 32, 16],
-                                        4,
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    mid_location = generate_from_chords(['A', 'D', 'F', 'E'],
+                                        [32, 32, 32, 32],
                                         80,
-                                        'tmp/gpt_model_state_dict.ph',
-                                        'tmp/output.mid')
+                                        os.path.join(script_dir, 'tmp', 'gpt_model_state_dict.ph'),
+                                        os.path.join(script_dir, 'tmp', 'output.mid'))
     print('gen fin')
 
 
 def testing_conversion():
-    mid_to_mp3('tmp/output.mid', 'tmp/FluidR3_GM_GS.sf2', 'tmp/output.mp3')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    mid_to_mp3(os.path.join(script_dir, 'tmp', 'output.mid'),
+               os.path.join(script_dir, 'tmp', 'tmp/FluidR3_GM_GS.sf2'),
+               os.path.join(script_dir, 'tmp', 'output.mp3'))
     print('convert fin')
-
 
 def test_chunk_sizes():
     # Define the directory path

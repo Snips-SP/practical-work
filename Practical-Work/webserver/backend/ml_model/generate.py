@@ -7,6 +7,34 @@ from transformers import GPT2LMHeadModel
 import pypianoroll
 
 
+def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=128):
+    device = model.device
+    generated_tokens = torch.tensor(context, device=device, dtype=torch.int64).unsqueeze(0)
+
+    while generated_tokens.shape[1] < max_tokens:
+        # The current context is the last n tokens which where generated
+        # where n is the window_size - step_size, since we need exactly step_size space
+        # to generate step_size new tokens
+        current_context = generated_tokens[:, -(window_size - step_size):]
+
+        output = model.generate(
+            current_context,
+            # We generate step_size new tokens
+            max_length=current_context.shape[1] + step_size,
+            temperature=1.0,
+            top_k=0,
+            top_p=0.7,
+            do_sample=True
+        )
+        # Grap only the new tokens
+        new_tokens = output[:, current_context.shape[1]:]
+        # Append the new tokens to ALL generated tokens
+        generated_tokens = torch.cat([generated_tokens, new_tokens], dim=1)
+
+    # Ignore input tokens by returning only the last max_tokens generated tokens
+    return generated_tokens[:, -max_tokens:].numpy()
+
+
 def generate_from_context(model, context, device):
     # Move to right device and generate
     input_ids = torch.tensor(context, device=device, dtype=torch.int64).unsqueeze(0)
@@ -25,14 +53,12 @@ def generate_from_context(model, context, device):
     return new_tokens.numpy()
 
 
-def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,  model_path: str, output: str = 'output.mid'):
+def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: str, output: str = 'output.mid'):
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
     device = 'cpu'
-
-    assert np.sum(timings) // 16 == num_bars, 'Chord timings dont add up to number of bars'
 
     model = GPT2LMHeadModel(NetworkConfig.config)
     model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
@@ -42,7 +68,7 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
     tokens = [chord2tokens(chord) for chord in chords]
 
     # Create empty pianoroll array
-    pianoroll = np.zeros((len(EncodingConfig.tracks), num_bars * 16, 128))
+    pianoroll = np.zeros((len(EncodingConfig.tracks), np.sum(timings), 128))
 
     # Retrieve first chord
     chord = tokens.pop(0)
@@ -56,8 +82,11 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
     # if we dont implement sliding window generation.
     # It could be however that the chord is to be repeated
     # More times than we can provide with these tokens.
+    # We would have to generate tokens until we have counted enough time_notes...
+    # But for now we just generate a bunch and hope for the best
+
     # Generate a sequence from our current context using the neural network
-    sequence_from_chord = generate_from_context(model, context_sequence, device)
+    sequence_from_chord = sliding_window_generate(model, context_sequence, max_tokens=1024)
 
     # FOR DEBUGGING
     # Set every 15th element to 420
@@ -80,7 +109,7 @@ def generate_from_chords(chords: list, timings: list, num_bars: int, tempo: int,
                     chord = tokens.pop(0)
                     context_sequence.extend(chord)
                     # Placeholder for generating a new sequence using the one we already have.
-                    sequence_from_chord = generate_from_context(model, context_sequence, device)
+                    sequence_from_chord = sliding_window_generate(model, context_sequence, max_tokens=1024)
 
                     # FOR DEBUGGING
                     # Set every 15th element to 420

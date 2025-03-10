@@ -89,7 +89,6 @@ def generate_music():
     tmp_mid_file = os.path.join('backend', 'tmp', f'{user_id}_tmp.mid')
     generate_from_chords(chords,
                          timings,
-                         int(sum(timings) / 16),
                          80,
                          os.path.join('backend', 'gpt_model_state_dict.ph'),
                          tmp_mid_file)
