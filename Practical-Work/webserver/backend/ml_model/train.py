@@ -28,26 +28,30 @@ def train(root_path, continue_from=None):
     # Set training parameters
     name = 'gpt_model_state_dict_epoch_'
     num_epochs = 3
-    batch_size = 192
+    batch_size = 64
 
-    print(f'Training for {num_epochs} with batch size {batch_size}.')
+    print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
 
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
+    device = 'cpu'
 
     print('Using device:', device)
 
     # Instantiate GPT-2 model
     model = GPT2LMHeadModel(NetworkConfig.config)
 
-    if os.path.isdir(continue_from):
-        model_path = get_latest_checkpoint(continue_from, name)
-        print(f'Continuing from directory: {continue_from}')
-        print(f'With state dict: {model_path}')
+    if continue_from is not None:
+        if os.path.isdir(continue_from):
+            model_path = get_latest_checkpoint(continue_from, name)
+            print(f'Continuing from directory: {continue_from}')
+            print(f'With state dict: {model_path}')
 
-        model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+            model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+        else:
+            raise FileNotFoundError('Directory for loading cannot be found')
 
     # Get dataset and dataloader
     dataset = GPT2Dataset(os.path.join(root_path, 'ldp_5_dataset'))

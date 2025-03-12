@@ -1,5 +1,5 @@
 from .helper import EncodingConfig, mid_to_mp3
-from .generate import generate_from_chords, sliding_window_generate
+from .generate import generate_from_chords, sliding_window_generate, generate_from_context
 from .dataloader import GPT2Dataset
 import numpy as np
 from tqdm import tqdm
@@ -9,9 +9,13 @@ import time
 import matplotlib
 import matplotlib.pyplot as plt
 from transformers import GPT2LMHeadModel, GPT2Config
+from .train import NetworkConfig
+from .helper import chord2tokens
+
 EncodingConfig.initialize()
 
 matplotlib.use('TkAgg')
+
 
 def dataloader_test():
     dataset = GPT2Dataset(os.path.join('backend', 'ml_model', 'ldp_5_dataset'))
@@ -31,10 +35,50 @@ def dataloader_test():
 
 def testing_generation():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    mid_location = generate_from_chords(['A', 'D', 'F', 'E'],
-                                        [32, 32, 32, 32],
+    device = 'cpu'
+
+    model = GPT2LMHeadModel(NetworkConfig.config)
+    model.load_state_dict(torch.load(os.path.join(script_dir, 'tmp', 'gpt_model_state_dict_0.ph'), weights_only=True,
+                                     map_location=device))
+    model.to(device)
+
+    # Encode chords into tokens
+    tokens = [chord2tokens(chord) for chord in ['A', 'D']]
+
+    # Create empty pianoroll array
+    pianoroll = np.zeros((len(EncodingConfig.tracks), np.sum([32, 32]), 128))
+
+    # Retrieve first chord
+    chord = tokens.pop(0)
+
+    # Will be used as context for the neural network
+    context_sequence = [EncodingConfig.end_note]
+    context_sequence.extend(chord)
+
+    input_ids = torch.tensor([context_sequence], dtype=torch.long)
+
+    # Manually generating in order to inspect
+    output = model(input_ids)
+    logits = output.logits  # Extract logits
+
+    print("Logits:", logits)  # Check for abnormal values
+
+    probs = torch.nn.functional.softmax(logits[:, -1, :], dim=-1)  # Apply softmax
+    print("Probabilities:", probs)  # Check if they sum to 1 and are valid
+
+    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)  # Sample tokens
+
+    generated_sequence_1 = generate_from_context(model, context_sequence, device)
+
+    generated_sequence_2 = sliding_window_generate(model, context_sequence, max_tokens=1024)
+
+
+def testing_generation_function():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    mid_location = generate_from_chords(['A', 'D'],
+                                        [32, 32],
                                         80,
-                                        os.path.join(script_dir, 'tmp', 'gpt_model_state_dict.ph'),
+                                        os.path.join(script_dir, 'tmp', 'gpt_model_state_dict_0.ph'),
                                         os.path.join(script_dir, 'tmp', 'output.mid'))
     print('gen fin')
 
@@ -45,6 +89,7 @@ def testing_conversion():
                os.path.join(script_dir, 'tmp', 'tmp/FluidR3_GM_GS.sf2'),
                os.path.join(script_dir, 'tmp', 'output.mp3'))
     print('convert fin')
+
 
 def test_chunk_sizes():
     # Define the directory path

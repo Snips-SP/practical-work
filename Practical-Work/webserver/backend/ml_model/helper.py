@@ -48,7 +48,7 @@ class EncodingConfig:
             cls.end_note = cls.tokens[-1] + 1
             cls.tokens.append(cls.end_note)  # Add the token which represents the end of the sequence (421)
             cls.padding_token = cls.tokens[-1] + 1  # Add the padding token to the mix (422)
-            cls.vocab_size = cls.padding_token
+            cls.vocab_size = cls.padding_token + 1  # We need to add one to the total size since 0 is included
 
             cls.trc_idx = sorted(list(range(len(cls.tracks))), key=lambda x: 0 if cls.tracks[x] == 'Bass' else 1)
 

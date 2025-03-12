@@ -38,7 +38,7 @@ def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, s
 def generate_from_context(model, context, device):
     # Move to right device and generate
     input_ids = torch.tensor(context, device=device, dtype=torch.int64).unsqueeze(0)
-    # TODO: Implement sliding window function to generate new tokens while slowly fading out the old context
+
     output_ids = model.generate(
         input_ids,
         max_length=1024,  # Generate 1024 NEW tokens, the generated sequence will include the input tokens as well
@@ -90,7 +90,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: s
 
     # FOR DEBUGGING
     # Set every 15th element to 420
-    sequence_from_chord[14::15] = EncodingConfig.time_note
+    # sequence_from_chord[14::15] = EncodingConfig.time_note
 
     # Loop over all the 1/16 notes in our pianoroll file
     pos = 0
@@ -113,7 +113,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: s
 
                     # FOR DEBUGGING
                     # Set every 15th element to 420
-                    sequence_from_chord[14::15] = EncodingConfig.time_note
+                    # sequence_from_chord[14::15] = EncodingConfig.time_note
                 else:
                     # TODO: Get rid of assumption
                     # We take notes from the same sequence generated earlier

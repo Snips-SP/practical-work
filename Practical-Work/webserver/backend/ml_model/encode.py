@@ -158,22 +158,14 @@ class Runner:
             print(f'Error processing {file}: {e}')
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', help='source dir', default='lpd_5')
-    parser.add_argument('--process', help='num process', type=int, default=4)
-    parser.add_argument('--da', help='modulation for data augmentation (0-11)', type=int, default=5)
-    parser.add_argument('--output', help='output name', required=True)
-    parser.add_argument('--sequence_length', help='Length of the individual sequences', default=1024)
-    parser.add_argument('--chunk_size', help='Amount of sequences in one chunk', default=400_000)
-    parser.add_argument('--encode_from_tmp',
-                        help='Grap the encodings and chunk them together from already encoded tmp files', type=bool,
-                        default=False)
-    args = parser.parse_args()
-
-    assert args.dataset == 'lpd_5', 'Dataset required lpd_5'
-
-    if args.dataset == 'lpd_5':
+def encode_dataset(output,
+                   dataset: str ='lpd_5',
+                   process: int = 4,
+                   da:int = 5,
+                   sequence_length: int = 1024,
+                   chunk_size: int = 400_000,
+                   encode_from_tmp: bool = False):
+    if dataset == 'lpd_5':
         tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
         if os.path.isdir('lpd_5/lpd_5_full'):
             dataset_path = 'lpd_5/lpd_5_full/*/*.npz'
@@ -187,9 +179,9 @@ if __name__ == '__main__':
         exit()
 
     # Check if the directory exists
-    if not os.path.exists(args.output):
+    if not os.path.exists(output):
         # Create the directory
-        os.makedirs(args.output)
+        os.makedirs(output)
 
     trc_len = len(tracks)
     # Push Bass index in front of leaving others as is
@@ -197,7 +189,7 @@ if __name__ == '__main__':
     # [Bass, Drums, Piano, Guitar, Strings]
     trc_idx = sorted(list(range(trc_len)), key=lambda x: 0 if tracks[x] == 'Bass' else 1)
 
-    if args.encode_from_tmp is False:
+    if encode_from_tmp is False:
         pianoroll_files = []
         if not os.path.exists(os.path.join('lpd_5', f'trc_avg.pkl')):
             # Get an average of each pitch value per track over all datapoints
@@ -248,12 +240,12 @@ if __name__ == '__main__':
             pianoroll_files = list(glob.glob(dataset_path))
 
         # Create a runner class to transfer read only variables to the processes
-        runner = Runner(trc_idx, args.da, trc_avg)
+        runner = Runner(trc_idx, da, trc_avg)
 
         # Encode the midi files as token encodings
         results = []
         with tqdm(total=len(pianoroll_files), desc='Encode midi files as token encoding. (2/3)') as t:
-            with Pool(args.process) as p:
+            with Pool(process) as p:
                 for _ in p.imap_unordered(runner.safe_run, pianoroll_files):
                     t.update(1)
     else:
@@ -266,11 +258,11 @@ if __name__ == '__main__':
         # Open temporary the encoding file
         with open(file_path + '.tmp', mode='rb') as f:
             file_chunk = pickle.load(f)
-        # Loop through the tokens in the sequence and split them into chunks of args.combine size
+        # Loop through the tokens in the sequence and split them into chunks of combine size
         for note in file_chunk:
             # Fill current sub chunk
             current_chunk.append(note)
-            if len(current_chunk) > int(args.sequence_length) - 1:
+            if len(current_chunk) > int(sequence_length) - 1:
                 # Save full chunk in list
                 chunks.append(np.stack(current_chunk))
                 # Start a new sub chunk
@@ -279,10 +271,10 @@ if __name__ == '__main__':
         # A chunk with 50000 sequences of length 4096 will take up around 390MB in memory
         # It will take around 0.48 seconds to load it into memory
         # Good enough if we load it in a second threat
-        if len(chunks) > int(args.chunk_size):
+        if len(chunks) > int(chunk_size):
             # Cast them to uint16 for less memory usage
             optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
-            np.savez_compressed(os.path.join(args.output, f'{numfiles:03d}.npz'), data=optimized_chunks)
+            np.savez_compressed(os.path.join(output, f'{numfiles:03d}.npz'), data=optimized_chunks)
             numfiles += 1
             chunks = []
 
@@ -292,8 +284,32 @@ if __name__ == '__main__':
     # chunks.append(current_chunk)
     # Cast them to uint16 for less memory usage
     optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
-    np.savez_compressed(os.path.join(args.output, f'{numfiles:03d}.npz'), data=optimized_chunks)
+    np.savez_compressed(os.path.join(output, f'{numfiles:03d}.npz'), data=optimized_chunks)
     chunks = []
     # Save the ordering of the tracks
-    with open(os.path.join(args.output, 'tracks.trc'), 'w') as f:
+    with open(os.path.join(output, 'tracks.trc'), 'w') as f:
         f.write(','.join([tracks[t] for t in trc_idx]))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', help='source dir', default='lpd_5')
+    parser.add_argument('--process', help='num process', type=int, default=4)
+    parser.add_argument('--da', help='modulation for data augmentation (0-11)', type=int, default=5)
+    parser.add_argument('--output', help='output name', required=True)
+    parser.add_argument('--sequence_length', help='Length of the individual sequences', default=1024)
+    parser.add_argument('--chunk_size', help='Amount of sequences in one chunk', default=400_000)
+    parser.add_argument('--encode_from_tmp',
+                        help='Grap the encodings and chunk them together from already encoded tmp files', type=bool,
+                        default=False)
+    args = parser.parse_args()
+
+    assert args.dataset == 'lpd_5', 'Dataset required lpd_5'
+
+    encode_dataset(args.output,
+                   args.dataset,
+                   args.process,
+                   args.da,
+                   args.sequence_length,
+                   args.chunk_size,
+                   args.encode_from_tmp)
