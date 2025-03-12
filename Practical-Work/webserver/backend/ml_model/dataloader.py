@@ -16,6 +16,7 @@ class GPT2Dataset(Dataset):
         self.next_data = []
         self.lock = threading.Lock()
         self.preload_event = threading.Event()
+        self.restart = False
 
         # Validate dataset path
         if not os.path.isdir(self.dataset_path):
@@ -68,9 +69,17 @@ class GPT2Dataset(Dataset):
 
         self.current_data = self.next_data
         self.next_data = []
-        self.current_file_index += 1
+        if self.restart:
+            self.current_file_index = 0
+            self.restart = False
+        else:
+            self.current_file_index += 1
         if self.current_file_index + 1 < len(self.chunk_files):
             self._preload_next(self.current_file_index + 1)
+        else:
+            # Preload the first file again to loop all the samples
+            self._preload_next(0)
+            self.restart = True
 
     def __len__(self):
         return self.length

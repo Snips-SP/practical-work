@@ -1,0 +1,18 @@
+conda create --name TorchXPU python=3.10.16 -y
+
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/test/xpu
+
+pip install transformers
+
+pip install pydub
+
+conda install -c conda-forge ffmpeg
+
+pip install tensorboard
+
+pip install flask
+
+pip install pypianoroll
+
+# Install locally on windows
+choco install fluidsynth -y

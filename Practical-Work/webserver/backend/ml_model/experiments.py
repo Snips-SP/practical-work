@@ -13,6 +13,21 @@ EncodingConfig.initialize()
 
 matplotlib.use('TkAgg')
 
+def dataloader_test():
+    dataset = GPT2Dataset(os.path.join('backend', 'ml_model', 'ldp_5_dataset'))
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=192,  # Number of samples per batch
+        shuffle=False,  # This would fuck up our preloading
+        num_workers=0,  # This would fuck up our preloading as well...
+    )
+
+    for epoch in range(4):
+        total_loss = 0
+        for batch_idx, batch in enumerate(dataloader):
+            print(f'batch idx: {batch_idx}')
+
 
 def testing_generation():
     script_dir = os.path.dirname(os.path.abspath(__file__))

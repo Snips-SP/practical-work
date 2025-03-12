@@ -7,8 +7,8 @@
 /CP_Drums_Generation/
 /chord2melody-main/
 /choco-main/
-/Practical-Work/runs/
-/Practical-Work/tmp/
+/Practical-Work/webserver/backend/ml_model/runs/
+/Practical-Work/webserver/backend/ml_model/tmp/
 /Practical-Work/output.mid
 /Practical-Work/gpt_model_state_dict.ph
 /Practical-Work/webserver/backend/FluidR3_GM_GS.sf2

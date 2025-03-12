@@ -77,6 +77,28 @@ def get_next_run_folder(name, base_dir='runs'):
     return new_run_path
 
 
+def get_latest_checkpoint(directory, name):
+    # Define a regex pattern to extract the epoch number
+    pattern = re.compile(rf'{name}(\d+)\.ph')
+
+    latest_epoch = -1
+    latest_file = None
+
+    # Iterate through files in the directory
+    for filename in os.listdir(directory):
+        match = pattern.match(filename)
+        if match:
+            epoch = int(match.group(1))  # Extract epoch number
+            if epoch > latest_epoch:
+                latest_epoch = epoch
+                latest_file = filename
+
+    if latest_file:
+        return os.path.join(directory, latest_file)
+    else:
+        return None  # No valid checkpoint found
+
+
 def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
     assert os.path.isfile(mid_file), 'Mid file not found'
     assert os.path.isfile(sf2_file), 'sf2 file not found'

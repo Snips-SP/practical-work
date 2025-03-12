@@ -1,7 +1,6 @@
 from .dataloader import GPT2Dataset
-from .helper import get_next_run_folder, EncodingConfig
+from .helper import get_next_run_folder, EncodingConfig, get_latest_checkpoint
 from transformers import GPT2LMHeadModel, GPT2Config, get_scheduler
-from torch import nn
 from tqdm import tqdm
 from torch.optim import AdamW
 import torch
@@ -25,10 +24,13 @@ class NetworkConfig:
     )
 
 
-if __name__ == '__main__':
+def train(root_path, continue_from=None):
     # Set training parameters
-    num_epochs = 1
-    batch_size = 128
+    name = 'gpt_model_state_dict_epoch_'
+    num_epochs = 3
+    batch_size = 192
+
+    print(f'Training for {num_epochs} with batch size {batch_size}.')
 
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
@@ -40,10 +42,15 @@ if __name__ == '__main__':
     # Instantiate GPT-2 model
     model = GPT2LMHeadModel(NetworkConfig.config)
 
-    torch.save(model.state_dict(), 'gpt_model_state_dict.ph')
+    if os.path.isdir(continue_from):
+        model_path = get_latest_checkpoint(continue_from, name)
+        print(f'Continuing from directory: {continue_from}')
+        print(f'With state dict: {model_path}')
+
+        model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
 
     # Get dataset and dataloader
-    dataset = GPT2Dataset('ldp_5_dataset')
+    dataset = GPT2Dataset(os.path.join(root_path, 'ldp_5_dataset'))
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -55,7 +62,7 @@ if __name__ == '__main__':
     # Create tensorboard logger in a new folder, so I have everything logged everytime,
     # since I often forget, and then it writes multiple runs into one folder which is a pain to separate.
     # Get the new folder path
-    log_dir = get_next_run_folder('GPT2_Model')
+    log_dir = get_next_run_folder('GPT2_Model', base_dir=os.path.join(root_path, 'runs'))
 
     # Create the directory if it doesn't exist
     os.makedirs(log_dir, exist_ok=True)
@@ -82,19 +89,19 @@ if __name__ == '__main__':
     # but it takes a lot of time to get running.
     # model = torch.compile(model)
 
+    # Disable caching as it conflicts with gradient_checkpointing
+    model.config.use_cache = False
+
     # Enable memory optimizations (we can get away with less memory)
     model.gradient_checkpointing_enable()
 
     # Define optimizer and learning rate scheduler
     optimizer = AdamW(model.parameters(), lr=5e-4)
 
-    # Cosin Annealing with Warmup as learning rate scheduler
+    # Cosine Annealing with Warmup as learning rate scheduler
     lr_scheduler = get_scheduler(
         "cosine", optimizer=optimizer, num_warmup_steps=500, num_training_steps=num_training_steps
     )
-
-    # Define loss function
-    criterion = nn.CrossEntropyLoss(ignore_index=EncodingConfig.padding_token)
 
     train_loss = []
     for epoch in range(num_epochs):
@@ -144,7 +151,12 @@ if __name__ == '__main__':
             progress_bar.update(1)
 
         train_loss.append(total_loss / len(dataloader))
-        total_loss = 0
+
+        torch.save(model.state_dict(), os.path.join(log_dir, f'{name}{epoch}.ph'))
 
     print('Training completed!')
     writer.close()
+
+
+if __name__ == '__main__':
+    train('.')
