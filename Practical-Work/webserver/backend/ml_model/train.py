@@ -1,4 +1,4 @@
-from .dataloader import GPT2Dataset
+from .dataloader import GPT2Dataset, GPT2RAMDataset
 from .helper import get_next_run_folder, EncodingConfig, get_latest_checkpoint
 from transformers import GPT2LMHeadModel, GPT2Config, get_scheduler
 from tqdm import tqdm
@@ -27,7 +27,7 @@ class NetworkConfig:
 def train(root_path, continue_from=None):
     # Set training parameters
     name = 'gpt_model_state_dict_epoch_'
-    num_epochs = 3
+    num_epochs = 1
     batch_size = 64
 
     print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
@@ -36,7 +36,6 @@ def train(root_path, continue_from=None):
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
-    device = 'cpu'
 
     print('Using device:', device)
 
@@ -54,7 +53,7 @@ def train(root_path, continue_from=None):
             raise FileNotFoundError('Directory for loading cannot be found')
 
     # Get dataset and dataloader
-    dataset = GPT2Dataset(os.path.join(root_path, 'ldp_5_dataset'))
+    dataset = GPT2RAMDataset(os.path.join(root_path, 'ldp_5_dataset'))
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -143,6 +142,10 @@ def train(root_path, continue_from=None):
 
             # Log some statistics
             detached_loss = loss.detach().cpu().item()
+
+            if detached_loss > 100:
+                raise Exception('Loss became to large!!!')
+
             total_loss += detached_loss
             global_step = epoch * len(dataloader) + batch_idx
             writer.add_scalar('Training Loss', detached_loss, global_step)

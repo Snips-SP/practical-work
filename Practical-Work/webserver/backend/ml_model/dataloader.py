@@ -112,7 +112,6 @@ class GPT2Dataset(Dataset):
 class GPT2RAMDataset(Dataset):
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path
-        self.max_length = None
         self.data = []
         self.length = 0
 
@@ -123,25 +122,15 @@ class GPT2RAMDataset(Dataset):
         for file_path in glob.glob(os.path.join(dataset_path, '*.npz')):
             # Load all into ram
             chunk = np.load(file_path)
-            self.data.extend([chunk[file] for file in chunk.files])
+            self.data.append([chunk[file] for file in chunk.files][0])
             chunk.close()
+        self.data = np.concatenate(self.data, axis=0)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         tokens = self.data[idx]
-        # Perform padding if needed
-        if len(tokens) < self.max_length:
-            # Create a padded array of size max_length filled with padding token (e.g., 0)
-            padded_tokens = np.zeros(self.max_length, dtype=int)
-            padded_tokens[:len(tokens)] = tokens
-            mask = np.zeros(self.max_length, dtype=int)
-            # Set mask to 1 for valid tokens
-            mask[:len(tokens)] = 1
-        else:
-            # No padding needed, just use the original tokens
-            padded_tokens = tokens[:self.max_length]
-            # Entire mask is 1
-            mask = np.ones(self.max_length, dtype=int)
-        return padded_tokens, mask
+        # Entire mask is 1
+        mask = np.ones(len(tokens), dtype=int)
+        return tokens, mask
