@@ -1,7 +1,7 @@
 
 # from backend import server
-# from backend.ml_model.experiments import testing_generation
-from backend.ml_model.encode import encode_dataset
+from backend.ml_model.experiments import testing_generation
+# from backend.ml_model.encode import encode_dataset
 
 import os
 from backend.ml_model.train import train
@@ -12,7 +12,7 @@ from backend.ml_model.train import train
 default_path = os.path.join('backend', 'ml_model')
 train(default_path) #, os.path.join('backend', 'ml_model', 'runs', 'GPT2_Model_7'))
 
-## testing_generation()
+# testing_generation()
 
 # import os
 

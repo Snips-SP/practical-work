@@ -28,7 +28,7 @@ def train(root_path, continue_from=None):
     # Set training parameters
     name = 'gpt_model_state_dict_epoch_'
     num_epochs = 1
-    batch_size = 64
+    batch_size = 2
 
     print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
 
@@ -36,6 +36,7 @@ def train(root_path, continue_from=None):
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
+    device = 'cpu'
 
     print('Using device:', device)
 
@@ -72,11 +73,11 @@ def train(root_path, continue_from=None):
 
     # Initialize SummaryWriter with the new log directory
     writer = SummaryWriter(log_dir=log_dir)
-    print(f"Logging to: {log_dir}")
+    print(f'Logging to: {log_dir}')
 
     # Training loop
     num_training_steps = num_epochs * len(dataloader)
-    progress_bar = tqdm(range(num_training_steps))
+    progress_bar = tqdm(range(num_training_steps), desc='Training Progress')
 
     # Make adjustment to the model
     model.train()
@@ -103,7 +104,7 @@ def train(root_path, continue_from=None):
 
     # Cosine Annealing with Warmup as learning rate scheduler
     lr_scheduler = get_scheduler(
-        "cosine", optimizer=optimizer, num_warmup_steps=500, num_training_steps=num_training_steps
+        'cosine', optimizer=optimizer, num_warmup_steps=500, num_training_steps=num_training_steps
     )
 
     train_loss = []
@@ -129,6 +130,8 @@ def train(root_path, continue_from=None):
                 # GPT-2 directly computes the loss if labels are provided
                 loss = outputs.loss
 
+                logits = outputs.logits.detach().cpu()
+
                 # Backward pass
             loss.backward()
 
@@ -143,9 +146,6 @@ def train(root_path, continue_from=None):
             # Log some statistics
             detached_loss = loss.detach().cpu().item()
 
-            if detached_loss > 100:
-                raise Exception('Loss became to large!!!')
-
             total_loss += detached_loss
             global_step = epoch * len(dataloader) + batch_idx
             writer.add_scalar('Training Loss', detached_loss, global_step)
@@ -154,6 +154,17 @@ def train(root_path, continue_from=None):
             # Add if statement to prevent numerical overflow
             perplexity = math.exp(detached_loss) if detached_loss < 20 else float('inf')
             writer.add_scalar('Perplexity', perplexity, global_step)
+
+            if detached_loss > 100:
+                raise Exception('Loss became to large!!!')
+
+            progress_bar.set_postfix({
+                'Batch': batch_idx,
+                'Loss': f'{detached_loss:.4f}',
+                'LR': f'{lr_scheduler.get_last_lr()[0]:.6f}',
+                'GradNorm': f'{total_norm:.2f}',
+                'Perplexity': f'{perplexity:.2f}'
+            })
 
             progress_bar.update(1)
 
