@@ -161,7 +161,7 @@ class Runner:
 def encode_dataset(output,
                    dataset: str ='lpd_5',
                    process: int = 4,
-                   da:int = 5,
+                   da: int = 5,
                    sequence_length: int = 1024,
                    chunk_size: int = 400_000,
                    encode_from_tmp: bool = False):
