@@ -10,6 +10,7 @@ import math
 
 EncodingConfig.initialize()
 
+
 class NetworkConfig:
     # All the instruments which are used in our encoding
     config = GPT2Config(
@@ -25,9 +26,9 @@ class NetworkConfig:
 
 def train_simple(root_path):
     # Set training parameters
-    name = 'gpt_model_state_dict_epoch_'
+    file_name = 'gpt_model_state_dict_epoch_'
     num_epochs = 1
-    batch_size = 100
+    batch_size = 32
     early_stopping = 1000
 
     print(f'Training simply for {num_epochs} epochs with batch size {batch_size}.')
@@ -106,7 +107,7 @@ def train_simple(root_path):
 
             for name, param in model.named_parameters():
                 if param.grad is not None and torch.isnan(param.grad).any():
-                    print(f'WARNING: NaN detected in gradients of {name}')
+                    print(f'WARNING: NaN detected in gradients of {file_name}')
                     raise Exception
 
             # Backward pass
@@ -141,7 +142,7 @@ def train_simple(root_path):
             progress_bar.update(1)
 
         train_loss.append(total_loss / len(dataset))
-        torch.save(model.state_dict(), os.path.join(log_dir, f'{name}{epoch}.ph'))
+        torch.save(model.state_dict(), os.path.join(log_dir, f'{file_name}{epoch}.ph'))
 
     print('Training completed!')
     writer.close()
@@ -149,7 +150,7 @@ def train_simple(root_path):
 
 def train(root_path, continue_from=None):
     # Set training parameters
-    name = 'gpt_model_state_dict_epoch_'
+    file_name = 'gpt_model_state_dict_epoch_'
     num_epochs = 1
     batch_size = 2
 
@@ -159,7 +160,6 @@ def train(root_path, continue_from=None):
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
-    device = 'cpu'
 
     print('Using device:', device)
 
@@ -168,7 +168,7 @@ def train(root_path, continue_from=None):
 
     if continue_from is not None:
         if os.path.isdir(continue_from):
-            model_path = get_latest_checkpoint(continue_from, name)
+            model_path = get_latest_checkpoint(continue_from, file_name)
             print(f'Continuing from directory: {continue_from}')
             print(f'With state dict: {model_path}')
 
@@ -293,7 +293,7 @@ def train(root_path, continue_from=None):
 
         train_loss.append(total_loss / len(dataloader))
 
-        torch.save(model.state_dict(), os.path.join(log_dir, f'{name}{epoch}.ph'))
+        torch.save(model.state_dict(), os.path.join(log_dir, f'{file_name}{epoch}.ph'))
 
     print('Training completed!')
     writer.close()

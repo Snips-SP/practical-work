@@ -164,22 +164,39 @@ def testing_generation():
     context_sequence = [EncodingConfig.end_note]
     context_sequence.extend(chord)
 
-    input_ids = torch.tensor([context_sequence], dtype=torch.long)
+    generated_sequence_1 = torch.tensor([context_sequence], dtype=torch.long)
 
-    # Manually generating in order to inspect
-    output = model(input_ids)
-    logits = output.logits  # Extract logits
+    for i in range(1024):
+        # Cut the sequence if it grows above our context size minus 1
+        generated_sequence_1 = generated_sequence_1[:, -(1024-1):]
 
-    print('Logits:', logits)  # Check for abnormal values
+        # Manually generating tokens one by one
+        output = model(generated_sequence_1)
+        logits = output.logits  # Extract logits
 
-    probs = torch.nn.functional.softmax(logits[:, -1, :], dim=-1)  # Apply softmax
-    print('Probabilities:', probs)  # Check if they sum to 1 and are valid
+        probs = torch.nn.functional.softmax(logits[:, -1, :], dim=-1)  # Apply softmax
 
-    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)  # Sample tokens
+        next_tokens = torch.multinomial(probs, num_samples=1)  # Sample tokens
 
-    generated_sequence_1 = generate_from_context(model, context_sequence, device)
+        # Append new token to our sequence
+        generated_sequence_1 = torch.concatenate([generated_sequence_1, next_tokens], dim=-1)
+    generated_sequence_1 = generated_sequence_1.squeeze(0)
 
-    generated_sequence_2 = sliding_window_generate(model, context_sequence, max_tokens=1024)
+    # Use predefined generation function
+    generated_sequence_2 = generate_from_context(model, context_sequence, device)
+    # Use predefined generation function with sliding window approach
+    generated_sequence_3 = sliding_window_generate(model, context_sequence, max_tokens=1024)
+
+    print(f'Max and min from method 1: {generated_sequence_1.max()}, {generated_sequence_1.min()}, Shape: {generated_sequence_1.shape}')
+    print(generated_sequence_1[:50])
+
+    print(f'Max and min from method 2: {generated_sequence_2.max()}, {generated_sequence_2.min()}, Shape: {generated_sequence_2.shape}')
+    print(generated_sequence_2[:50])
+
+    print(f'Max and min from method 3: {generated_sequence_3.max()}, {generated_sequence_3.min()}, Shape: {generated_sequence_3.shape}')
+    print(generated_sequence_3.squeeze(0)[:50])
+
+    print('fin')
 
 
 def testing_generation_function():
@@ -187,7 +204,7 @@ def testing_generation_function():
     mid_location = generate_from_chords(['A', 'D'],
                                         [32, 32],
                                         80,
-                                        os.path.join(script_dir, 'tmp', 'gpt_model_state_dict_0.ph'),
+                                        os.path.join(script_dir, 'tmp', 'gpt_model_state_dict.ph'),
                                         os.path.join(script_dir, 'tmp', 'output.mid'))
     print('gen fin')
 
@@ -195,7 +212,7 @@ def testing_generation_function():
 def testing_conversion():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     mid_to_mp3(os.path.join(script_dir, 'tmp', 'output.mid'),
-               os.path.join(script_dir, 'tmp', 'tmp/FluidR3_GM_GS.sf2'),
+               os.path.join(script_dir, 'tmp', 'FluidR3_GM_GS.sf2'),
                os.path.join(script_dir, 'tmp', 'output.mp3'))
     print('convert fin')
 

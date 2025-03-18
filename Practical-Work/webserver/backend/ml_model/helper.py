@@ -1,8 +1,17 @@
 import os
 import re
 import subprocess
-from pydub import AudioSegment
 from pydub.silence import split_on_silence
+from pydub import AudioSegment
+from pydub.utils import which
+
+# Finds ffmpeg in system path
+ffmpeg_path = which('ffmpeg')
+if ffmpeg_path is None:
+    # Manually specify if needed
+    ffmpeg_path = r'C:\Users\brunner4\anaconda3\envs\TorchGPU\Library\bin\ffmpeg.exe'
+
+AudioSegment.converter = ffmpeg_path
 
 
 class EncodingConfig:

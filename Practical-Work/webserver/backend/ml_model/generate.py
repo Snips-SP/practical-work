@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from transformers import GPT2LMHeadModel
 import pypianoroll
+from tqdm import trange
 
 
 def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=128):
@@ -32,7 +33,7 @@ def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, s
         generated_tokens = torch.cat([generated_tokens, new_tokens], dim=1)
 
     # Ignore input tokens by returning only the last max_tokens generated tokens
-    return generated_tokens[:, -max_tokens:].numpy()
+    return generated_tokens[:, -max_tokens:].cpu().squeeze(0).numpy()
 
 
 def generate_from_context(model, context, device):
@@ -50,7 +51,7 @@ def generate_from_context(model, context, device):
     # Only keep new tokens
     new_tokens = output_ids[0, input_ids.shape[1]:]
 
-    return new_tokens.numpy()
+    return new_tokens.cpu().squeeze(0).numpy()
 
 
 def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: str, output: str = 'output.mid'):
@@ -58,7 +59,6 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: s
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
-    device = 'cpu'
 
     model = GPT2LMHeadModel(NetworkConfig.config)
     model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
@@ -95,43 +95,45 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: s
     # Loop over all the 1/16 notes in our pianoroll file
     pos = 0
     timings_pos = 0
-    while pos < pianoroll.shape[1]:
-        for note in sequence_from_chord:
-            # Add the current note to the context
-            context_sequence.append(note)
+    with trange(pos, pianoroll.shape[1]) as progress_bar:
+        while pos < pianoroll.shape[1]:
+            for note in sequence_from_chord:
+                # Add the current note to the context
+                context_sequence.append(note)
 
-            if note == EncodingConfig.time_note:
-                # We have hit a time note, thus we have to advance to the next 1/16th note in the song
-                if timings[timings_pos] == 0:
-                    timings_pos += 1
-                    # The chord was repeated the correct amount of times
-                    # Time for a chord change, which means we generate new sequence from our context plus the new chord
-                    chord = tokens.pop(0)
-                    context_sequence.extend(chord)
-                    # Placeholder for generating a new sequence using the one we already have.
-                    sequence_from_chord = sliding_window_generate(model, context_sequence, max_tokens=1024)
+                if note == EncodingConfig.time_note:
+                    # We have hit a time note, thus we have to advance to the next 1/16th note in the song
+                    if timings[timings_pos] == 0:
+                        timings_pos += 1
+                        # The chord was repeated the correct amount of times
+                        # Time for a chord change, which means we generate new sequence from our context plus the new chord
+                        chord = tokens.pop(0)
+                        context_sequence.extend(chord)
+                        # Placeholder for generating a new sequence using the one we already have.
+                        sequence_from_chord = sliding_window_generate(model, context_sequence, max_tokens=1024)
 
-                    # FOR DEBUGGING
-                    # Set every 15th element to 420
-                    # sequence_from_chord[14::15] = EncodingConfig.time_note
-                else:
-                    # TODO: Get rid of assumption
-                    # We take notes from the same sequence generated earlier
-                    # We assume that the network will not just switch chord on it own in such a quick manner
-                    timings[timings_pos] -= 1
-                # Either way update the position by 1
-                pos += 1
-                if pos >= pianoroll.shape[1]:
-                    break
-            elif note < EncodingConfig.time_note:
-                # We have hit an actually generated note, thus we put it into its right place in our pianoroll array
-                # Calculate which track the note belongs to
-                trc = EncodingConfig.trc_idx.index(note // EncodingConfig.note_size)
-                # Calculate the midi note value
-                mid = note % EncodingConfig.note_size + EncodingConfig.note_offset
-                # Set the volume to 100 for the note in the piano roll array
-                if mid < 128:
-                    pianoroll[trc, pos, mid] = 100
+                        # FOR DEBUGGING
+                        # Set every 15th element to 420
+                        # sequence_from_chord[14::15] = EncodingConfig.time_note
+                    else:
+                        # TODO: Get rid of assumption
+                        # We take notes from the same sequence generated earlier
+                        # We assume that the network will not just switch chord on it own in such a quick manner
+                        timings[timings_pos] -= 1
+                    # Either way update the position by 1
+                    pos += 1
+                    if pos >= pianoroll.shape[1]:
+                        break
+                    progress_bar.update(1)  # Update tqdm
+                elif note < EncodingConfig.time_note:
+                    # We have hit an actually generated note, thus we put it into its right place in our pianoroll array
+                    # Calculate which track the note belongs to
+                    trc = EncodingConfig.trc_idx.index(note // EncodingConfig.note_size)
+                    # Calculate the midi note value
+                    mid = note % EncodingConfig.note_size + EncodingConfig.note_offset
+                    # Set the volume to 100 for the note in the piano roll array
+                    if mid < 128:
+                        pianoroll[trc, pos, mid] = 100
 
     pr = []
     for i, t in enumerate(EncodingConfig.tracks):
