@@ -1,27 +1,13 @@
-
 # from backend import server
 # from backend.ml_model.experiments import testing_generation, training_test, testing_generation_function, testing_conversion
-# from backend.ml_model.encode import encode_dataset
 
 import os
-from backend.ml_model.train import train_simple
+from backend.ml_model.train import train
 
 # Start webserver
 # server.run()
 
-train_simple() #, os.path.join('backend', 'ml_model', 'runs', 'GPT2_Model_7'))
+train() #, os.path.join('backend', 'ml_model', 'runs', 'GPT2_Model_7'))
 
-#training_test()
-
-# testing_generation_function()
-
-# testing_conversion()
-
-# import os
-
-# if __name__ == '__main__':
-#    os.chdir(os.path.join('backend', 'ml_model'))
-#
-#    encode_dataset('ldp_5_dataset', da=1)
 
 
