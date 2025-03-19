@@ -63,13 +63,13 @@ EncodingConfig.initialize()
 class NetworkConfig:
     # All the instruments which are used in our encoding
     config = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,
+        vocab_size=EncodingConfig.vocab_size,  # 423
         n_positions=1024,  # Maximum sequence length
-        n_ctx=1024,  # Context window size
+        n_ctx=256,  # Context window size
         n_embd=256,  # Embedding size
         n_layer=2,  # Number of transformer layers
         n_head=2,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,
+        pad_token_id=EncodingConfig.padding_token,  # 422
     )
 
 
@@ -204,13 +204,14 @@ def train(continue_from: str = None):
         total_loss = 0
         for batch_idx, batch in enumerate(dataloader):
             input_ids = batch[0].to(device).long()
-            attention_mask = batch[1].to(device).long()
+            # We dont need padding since our data is always 1024 tokens long
+            # attention_mask = batch[1].to(device).long()
 
             # Zero gradients before the backward pass (best practice for pytorch)
             optimizer.zero_grad()
 
             outputs = model(input_ids=input_ids,
-                            attention_mask=attention_mask,
+                            # attention_mask=attention_mask,
                             labels=input_ids)
             # GPT-2 directly computes the loss if labels are provided
             loss = outputs.loss

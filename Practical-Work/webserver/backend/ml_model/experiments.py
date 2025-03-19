@@ -24,6 +24,7 @@ matplotlib.use('TkAgg')
 def training_test():
     # Set training parameters
     num_epochs = 1
+    batch_size = 8
 
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
@@ -63,57 +64,70 @@ def training_test():
     train_loss = []
     for epoch in range(num_epochs):
         total_loss = 0
+        batch_input_ids = torch.zeros((batch_size, 1024))
+        batch_attention_mask = torch.zeros((batch_size, 1024))
         for batch_idx, batch in enumerate(dataset):
-            input_ids = torch.tensor(batch['input_ids'], device=device).long()
-            attention_mask = torch.tensor(batch['attention_mask'], device=device).long()
+            # Manual batching
+            batch_input_ids[batch_idx % batch_size, :] = torch.tensor(batch['input_ids'])
+            batch_attention_mask[batch_idx % batch_size, :] = torch.tensor(batch['attention_mask'])
 
-            outputs = model(input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            labels=input_ids)
+            # If the current batch tensor is full we feed it to the network
+            if batch_input_ids[-1, 0] != 0:
+                # Move them to gpu
+                batch_input_ids = batch_input_ids.to(device).long()
+                batch_attention_mask = batch_attention_mask.to(device).long()
 
-            invalid_tokens = (input_ids >= model.config.vocab_size).any()
-            if invalid_tokens:
-                print('WARNING: Input contains out-of-range token IDs!')
+                outputs = model(input_ids=batch_input_ids,
+                                attention_mask=batch_attention_mask,
+                                labels=batch_input_ids)
 
-            # Check if there are any NaN values
-            if torch.isnan(outputs.logits).any():
-                print('NaN detected in logits!')
+                invalid_tokens = (batch_input_ids >= model.config.vocab_size).any()
+                if invalid_tokens:
+                    print('WARNING: Input contains out-of-range token IDs!')
 
-            # Zero gradients before the backward pass (best practice for pytorch)
-            optimizer.zero_grad()
+                # Check if there are any NaN values
+                if torch.isnan(outputs.logits).any():
+                    print('NaN detected in logits!')
 
-            # GPT-2 directly computes the loss if labels are provided
-            loss = outputs.loss
+                # Zero gradients before the backward pass (best practice for pytorch)
+                optimizer.zero_grad()
 
-            if torch.isnan(loss):
-                print('NaN detected in loss!')
+                # GPT-2 directly computes the loss if labels are provided
+                loss = outputs.loss
 
-            for name, param in model.named_parameters():
-                if param.grad is not None and torch.isnan(param.grad).any():
-                    print(f'NaN detected in gradients of {name}')
+                if torch.isnan(loss):
+                    print('NaN detected in loss!')
 
-            # Backward pass
-            loss.backward()
+                for name, param in model.named_parameters():
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        print(f'NaN detected in gradients of {name}')
 
-            # Gradient Clipping to prevent exploding gradients
-            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                # Backward pass
+                loss.backward()
 
-            # Optimizer step
-            optimizer.step()
+                # Gradient Clipping to prevent exploding gradients
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
 
-            # Log some statistics
-            detached_loss = loss.detach().cpu().item()
+                # Optimizer step
+                optimizer.step()
 
-            total_loss += detached_loss
+                # Log some statistics
+                detached_loss = loss.detach().cpu().item()
 
-            if detached_loss > 100:
-                raise Exception('Loss became to large!!!')
+                total_loss += detached_loss
 
-            progress_bar.set_postfix({
-                'Loss': f'{detached_loss:.4f}',
-            })
+                if detached_loss > 100:
+                    raise Exception('Loss became to large!!!')
+
+                progress_bar.set_postfix({
+                    'Loss': f'{detached_loss:.4f}',
+                })
+                # Zero out batch for the next run
+                batch_input_ids = torch.zeros((batch_size, 1024))
+                batch_attention_mask = torch.zeros((batch_size, 1024))
 
             progress_bar.update(1)
+
         train_loss.append(total_loss / len(dataset))
 
     # Test the network if it learned our dummy dataset
