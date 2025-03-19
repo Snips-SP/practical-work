@@ -1,4 +1,4 @@
-from .helper import EncodingConfig, mid_to_mp3
+from .train import EncodingConfig
 from .generate import generate_from_chords, sliding_window_generate, generate_from_context
 from .dataloader import GPT2Dataset
 import numpy as np
@@ -10,7 +10,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from transformers import GPT2LMHeadModel, GPT2Config
 from .train import NetworkConfig
-from .helper import chord2tokens
+from .helper import chord2tokens, mid_to_mp3
 import torch
 from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArguments, DataCollatorForLanguageModeling
 from datasets import Dataset
@@ -35,7 +35,7 @@ def training_test():
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     tokenizer.pad_token = tokenizer.eos_token
     text_data = ['Hello world! This is a test sentence.'] * 1000
-    tokenized_data = tokenizer(text_data, truncation=True, padding='max_length', max_length=20, return_tensors='pt')
+    tokenized_data = tokenizer(text_data, truncation=True, padding='max_length', max_length=1024, return_tensors='pt')
 
     # Convert to Hugging Face Dataset format
     dataset = Dataset.from_dict(

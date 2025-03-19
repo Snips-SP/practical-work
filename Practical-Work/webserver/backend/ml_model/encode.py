@@ -1,4 +1,4 @@
-from .helper import EncodingConfig
+from .train import EncodingConfig
 import pypianoroll
 import glob
 import pickle
