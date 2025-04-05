@@ -125,9 +125,9 @@ def train(continue_from: str = None):
     # Set training parameters
     file_name = 'gpt_model_state_dict_epoch_'
     num_epochs = 1
-    batch_size = 16
+    batch_size = 32
 
-    print(f'Training simply for {num_epochs} epochs with batch size {batch_size}.')
+    print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
 
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
@@ -137,6 +137,18 @@ def train(continue_from: str = None):
 
     # Instantiate GPT-2 model
     model = GPT2LMHeadModel(NetworkConfig.config)
+
+    # Define a function to initialize weights
+    def init_weights(module):
+        if isinstance(module, torch.nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, torch.nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    # Apply the weight initialization
+    model.apply(init_weights)
 
     if continue_from is not None:
         if os.path.isdir(continue_from):
@@ -195,9 +207,9 @@ def train(continue_from: str = None):
     # model.gradient_checkpointing_enable()
 
     # Cosine Annealing with Warmup as learning rate scheduler
-    # lr_scheduler = get_scheduler(
-    #     'cosine', optimizer=optimizer, num_warmup_steps=500, num_training_steps=num_training_steps
-    # )
+    lr_scheduler = get_scheduler(
+        'cosine', optimizer=optimizer, num_warmup_steps=500, num_training_steps=num_training_steps
+    )
 
     train_loss = []
     for epoch in range(num_epochs):
@@ -244,7 +256,7 @@ def train(continue_from: str = None):
             optimizer.step()
 
             # Update learning rate
-            # lr_scheduler.step()
+            lr_scheduler.step()
 
             # Log some statistics
             detached_loss = loss.detach().cpu().item()
