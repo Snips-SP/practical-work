@@ -100,7 +100,7 @@ class Runner:
                 # Bring the pitch down if we exceed 127. The highest value of midi files (0x7F)
                 if pitch > 127:
                     pitch -= 12
-                # Apply our offset ### TODO: Figure out why we need an offset
+                # Apply our offset
                 pitch -= EncodingConfig.note_offset
 
                 # Do some checks again to ensure that the note is within our interval of wanted notes

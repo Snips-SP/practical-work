@@ -7,6 +7,7 @@ import torch
 import os
 from torch.utils.tensorboard import SummaryWriter
 import math
+from torch.nn import CrossEntropyLoss
 
 
 class EncodingConfig:
@@ -124,8 +125,8 @@ def train(continue_from: str = None):
     root_path = os.path.dirname(os.path.abspath(__file__))
     # Set training parameters
     file_name = 'gpt_model_state_dict_epoch_'
-    num_epochs = 1
-    batch_size = 32
+    num_epochs = 2
+    batch_size = 16
 
     print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
 
@@ -150,6 +151,7 @@ def train(continue_from: str = None):
     # Apply the weight initialization
     model.apply(init_weights)
 
+    # Search for ph file to continue training from this file
     if continue_from is not None:
         if os.path.isdir(continue_from):
             model_path = get_latest_checkpoint(continue_from, file_name)
@@ -187,8 +189,11 @@ def train(continue_from: str = None):
     model.train()
     model.to(device)
 
+    # Define loss function
+    loss_fn = CrossEntropyLoss(ignore_index=EncodingConfig.padding_token)
+
     # Define optimizer and learning rate scheduler
-    optimizer = AdamW(model.parameters(), lr=1e-6)
+    optimizer = AdamW(model.parameters(), lr=1e-4)
 
     # Compile model for additional training speed
     # Torch compile uses the triton backend, which I have not installed.
@@ -208,7 +213,10 @@ def train(continue_from: str = None):
 
     # Cosine Annealing with Warmup as learning rate scheduler
     lr_scheduler = get_scheduler(
-        'cosine', optimizer=optimizer, num_warmup_steps=500, num_training_steps=num_training_steps
+        'cosine',
+        optimizer=optimizer,
+        num_warmup_steps=500,
+        num_training_steps=num_training_steps
     )
 
     train_loss = []
@@ -222,11 +230,16 @@ def train(continue_from: str = None):
             # Zero gradients before the backward pass (best practice for pytorch)
             optimizer.zero_grad()
 
-            outputs = model(input_ids=input_ids,
-                            # attention_mask=attention_mask,
-                            labels=input_ids)
-            # GPT-2 directly computes the loss if labels are provided
-            loss = outputs.loss
+            # If we only give the inputs and not the labels the hugging face model will not calculate
+            # the loss on its own, so we can use our own loss function
+            outputs = model(input_ids=input_ids)
+
+            # Remove last timestep, because it does not predict anything
+            shift_logits = outputs.logits[..., :-1, :].contiguous()
+            # Remove the first timestep because it does not have a previous to predict
+            shift_labels = input_ids[..., 1:].contiguous()
+
+            loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
             # Check if there are any NaN values
             if torch.isnan(outputs.logits).any():
@@ -237,10 +250,10 @@ def train(continue_from: str = None):
                 print('WARNING: NaN detected in loss!')
                 raise Exception
 
-            for name, param in model.named_parameters():
-                if param.grad is not None and torch.isnan(param.grad).any():
-                    print(f'WARNING: NaN detected in gradients of {file_name}')
-                    raise Exception
+            # for name, param in model.named_parameters():
+            #     if param.grad is not None and torch.isnan(param.grad).any():
+            #         print(f'WARNING: NaN detected in gradients of {name}')
+            #         raise Exception
 
             # Backward pass
             loss.backward()
@@ -264,7 +277,7 @@ def train(continue_from: str = None):
             total_loss += detached_loss
             global_step = epoch * len(dataloader) + batch_idx
             writer.add_scalar('Training Loss', detached_loss, global_step)
-            # writer.add_scalar('Learning Rate', lr_scheduler.get_last_lr()[0], global_step)
+            writer.add_scalar('Learning Rate', lr_scheduler.get_last_lr()[0], global_step)
             writer.add_scalar('Gradient Norm', total_norm, global_step)
             # Add if statement to prevent numerical overflow
             perplexity = math.exp(detached_loss) if detached_loss < 20 else float('inf')
@@ -273,7 +286,7 @@ def train(continue_from: str = None):
             progress_bar.set_postfix({
                 'Batch': batch_idx,
                 'Loss': f'{detached_loss:.4f}',
-                # 'LR': f'{lr_scheduler.get_last_lr()[0]:.6f}',
+                'LR': f'{lr_scheduler.get_last_lr()[0]:.6f}',
                 'GradNorm': f'{total_norm:.2f}',
                 'Perplexity': f'{perplexity:.2f}'
             })

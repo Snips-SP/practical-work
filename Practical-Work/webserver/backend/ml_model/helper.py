@@ -3,6 +3,7 @@ import subprocess
 from pydub.silence import split_on_silence
 from pydub import AudioSegment
 from pydub.utils import which
+from .train import EncodingConfig
 
 # Finds ffmpeg in system path
 ffmpeg_path = which('ffmpeg')

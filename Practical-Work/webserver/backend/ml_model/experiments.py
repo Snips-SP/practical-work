@@ -215,8 +215,8 @@ def testing_generation():
 
 def testing_generation_function():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    mid_location = generate_from_chords(['A', 'D'],
-                                        [32, 32],
+    mid_location = generate_from_chords(['C', 'G', 'Am', 'F'],
+                                        [32, 32, 32, 32],
                                         80,
                                         os.path.join(script_dir, 'tmp', 'gpt_model_state_dict.ph'),
                                         os.path.join(script_dir, 'tmp', 'output.mid'))
