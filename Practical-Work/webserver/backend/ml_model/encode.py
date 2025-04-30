@@ -1,4 +1,4 @@
-from .train import EncodingConfig
+from train import EncodingConfig
 import pypianoroll
 import glob
 import pickle
@@ -8,6 +8,7 @@ from tqdm import tqdm
 import numpy as np
 from multiprocessing import Pool
 import argparse
+
 EncodingConfig.initialize()
 
 
@@ -24,12 +25,19 @@ class Runner:
         # Beat resolution is the number of steps a measure is divided into
         # Calculate how many time steps a quarter note takes to fill a measure
         step = m.resolution // 4
-        # Convert it to a numpy array of shape (num_time_steps, num_pitches=128, num_tracks)
+        # Convert it to a numpy array of shape (num_tracks, num_time_steps, num_pitches=128)
         pr = m.stack()
         # Transpose the array to have shape (num_time_steps, num_pitches, num_tracks)
         pr = np.transpose(pr, (1, 2, 0))
         # Change ordering to get the bass first and have consistent indexing
         pr = pr[:, :, self.trc_idx]
+        # This changes the indexing to:
+        # 0 = Bass (Program: 32)
+        # 1 = Drums (Program: Drums (0))
+        # 2 = Piano (Program: 0)
+        # 3 = Guitar (Program: 24)
+        # 4 = String (Program: 48)
+
         # Again get all time steps of notes being played
         p = np.where(pr != 0)
         # Calculate the average pitch of this song per track
@@ -58,6 +66,7 @@ class Runner:
             # Create an encoding sequence for each modulation
             for i in range(len(p[0])):
                 # Ignore smaller notes then sixteenth notes or notes that are not on the gird
+                # only look at indices 0, 6, 12, 18, 24
                 if p[0][i] % step != 0:
                     continue
                 # Only if we have advanced in the position will the current cur_seq be written down
@@ -100,7 +109,7 @@ class Runner:
                 # Bring the pitch down if we exceed 127. The highest value of midi files (0x7F)
                 if pitch > 127:
                     pitch -= 12
-                # Apply our offset
+                # Apply our offset to encode less notes [0, 83]
                 pitch -= EncodingConfig.note_offset
 
                 # Do some checks again to ensure that the note is within our interval of wanted notes
@@ -128,23 +137,21 @@ class Runner:
 
     def _reorder_current(self, cur_seq):
         # Reorder the sequence so that piano is the last instrument
-        # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
-        # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
-        # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
-        # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
+        # Bass: [0 * 84, 0 * 84 + 83] = [0, 83]
+        # Drums: [1 * 84, 1 * 84 + 83] = [84, 167]
+        # Piano: [2 * 84, 2 * 84 + 83] = [168, 251]
+        # Guitar: [3 * 84, 3 * 84 + 83] = [252, 335]
         # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
 
-        ### TODO: Something seems wrong here, '# Bass, Piano, etc..., Drums' seems to imply a different ordering
         cur = []
         for c in sorted(cur_seq):
             # Checks if a note c is not in the range [84, 168)
-            # i.e. if the instrument is one of the following
-            # Bass, Drums, Guitar, Strings
+            # i.e. if the instrument is not drums
             if not (c >= EncodingConfig.note_size and c < EncodingConfig.note_size * 2):
                 cur.append(c)
         for c in sorted(cur_seq):
             # Checks if a note c is in the range [84, 168)
-            # i.e. if the instrument is piano
+            # i.e. if the instrument is drums
             if (c >= EncodingConfig.note_size and c < EncodingConfig.note_size * 2):
                 cur.append(c)
 
@@ -159,7 +166,7 @@ class Runner:
 
 
 def encode_dataset(output,
-                   dataset: str ='lpd_5',
+                   dataset: str = 'lpd_5',
                    process: int = 4,
                    da: int = 5,
                    sequence_length: int = 1024,

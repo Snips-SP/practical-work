@@ -42,10 +42,10 @@ class EncodingConfig:
     @classmethod
     def initialize(cls):
         if not cls.tokens:  # Prevent re-initialization
-            # Drums: [0 * 84, 0 * 84 + 83] = [0, 83]
-            # Piano: [1 * 84, 1 * 84 + 83] = [84, 167]
-            # Guitar: [2 * 84, 2 * 84 + 83] = [168, 251]
-            # Bass: [3 * 84, 3 * 84 + 83] = [252, 335]
+            # Bass: [0 * 84, 0 * 84 + 83] = [0, 83]
+            # Drums: [1 * 84, 1 * 84 + 83] = [84, 167]
+            # Piano: [2 * 84, 2 * 84 + 83] = [168, 251]
+            # Guitar: [3 * 84, 3 * 84 + 83] = [252, 335]
             # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
             cls.tokens.extend(range(0, 420))
             cls.time_note = cls.tokens[-1] + 1
@@ -249,11 +249,6 @@ def train(continue_from: str = None):
             if torch.isnan(loss):
                 print('WARNING: NaN detected in loss!')
                 raise Exception
-
-            # for name, param in model.named_parameters():
-            #     if param.grad is not None and torch.isnan(param.grad).any():
-            #         print(f'WARNING: NaN detected in gradients of {name}')
-            #         raise Exception
 
             # Backward pass
             loss.backward()

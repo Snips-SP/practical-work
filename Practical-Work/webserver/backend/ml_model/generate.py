@@ -129,7 +129,12 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: s
             elif note < EncodingConfig.time_note:
                 # We have hit an actually generated note, thus we put it into its right place in our pianoroll array
                 # Calculate which track the note belongs to
-                trc = EncodingConfig.trc_idx.index(note // EncodingConfig.note_size)
+                # 0 = Bass -> 3 = Bass
+                # 1 = Drums -> 0 = Drums
+                # 2 = Piano -> 1 = Piano
+                # 3 = Guitar -> 2 = Guitar
+                # 4 = String -> 4 Strings
+                trc = EncodingConfig.trc_idx[note // EncodingConfig.note_size]
                 # Calculate the midi note value
                 mid = note % EncodingConfig.note_size + EncodingConfig.note_offset
                 # Set the volume to 100 for the note in the piano roll array
@@ -138,9 +143,16 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: s
 
     pr = []
     for i, t in enumerate(EncodingConfig.tracks):
-        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t], is_drum=(t == 'Drums')))
+        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t],
+                                            is_drum=(t == 'Drums')))
     mt = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=4)
 
+    # Set a few flags to making working in the daw easier
+    for track in mt.tracks:
+        if not track.is_drum:
+            track.name = f'Program: {track.program}'
+        else:
+            track.name = f'Program: 0 (Drums)'
     mt.write(output)
 
     return output
