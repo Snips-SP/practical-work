@@ -95,7 +95,7 @@ def generate_music():
                          tmp_mid_file)
     # Trim and convert to mp3
     mid_to_mp3(tmp_mid_file,
-               os.path.join('backend', 'FluidR3_GM_GS.sf2'),
+               os.path.join('backend', 'SoundFont.sf2'),
                new_song_path)
     os.remove(tmp_mid_file)
 

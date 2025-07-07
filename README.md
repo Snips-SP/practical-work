@@ -101,7 +101,7 @@ This launches a local web interface where users can:
 ### Note
 
 - Model weights must be placed in `backend/gpt.pt`
-- The `.sf2` soundfont file (e.g., `FluidR3_GM_GS.sf2`) must be in the `backend/` folder as well. (https://musical-artifacts.com/artifacts/738)
+- The `SoundFont.sf2` soundfont file (e.g., `FluidR3_GM_GS.sf2`) must be in the `backend/` folder as well. (https://musical-artifacts.com/artifacts/738)
 
 ---
 
@@ -171,7 +171,7 @@ webserver/
 │   │   ├── helper.py
 │   │   └── train.py              # Train your own model
 │   ├── __init__.py
-│   ├── FluidR3_GM_GS.sf2         # SoundFont file for rendering MIDI to audio
+│   ├── SoundFont.sf2             # SoundFont file for rendering MIDI to audio
 │   ├── gpt.ph                    # Trained GPT-2 model weights
 │   └── server.py                 # Web server backend
 │
