@@ -86,11 +86,12 @@ def generate_music():
     new_song_path = os.path.join(session_dir, f'{current_song_name}.mp3')
 
     # Generate midi file
+    os.makedirs(os.path.join('backend', 'tmp'), exist_ok=True)
     tmp_mid_file = os.path.join('backend', 'tmp', f'{user_id}_tmp.mid')
     generate_from_chords(chords,
                          timings,
                          80,
-                         os.path.join('backend', 'gpt_model_state_dict.ph'),
+                         os.path.join('backend', 'gpt.ph'),
                          tmp_mid_file)
     # Trim and convert to mp3
     mid_to_mp3(tmp_mid_file,
