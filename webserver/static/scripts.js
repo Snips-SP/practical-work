@@ -82,44 +82,57 @@ document.addEventListener('DOMContentLoaded', function () {
             dropdownMenu.style.display = 'none';
         }
     });
+    
+
 
     generateButton.addEventListener('click', function () {
         const chord_progression_value = document.getElementById('chord_progression').value;
+        const bpmValue = document.getElementById('bpm').value.trim();
+        const bpm = Number(bpmValue);
 
-        // Show loading spinner
-        loadingSpinner.style.display = 'block';
+        if (!Number.isInteger(bpm)) {
+          alert('Please enter a valid whole number.');
+        }
+        else if (bpm < 40 || bpm > 200) {
+          alert('Please enter a BPM between 40 and 200.');
+        }
+        else{
+            // Show loading spinner
+            loadingSpinner.style.display = 'block';
 
-        let spinnerFrames = ['[|]', '[/]', '[-]', '[\\]'];
-        let frameIndex = 0;
-        let spinnerInterval = setInterval(() => {
-            loadingSpinner.textContent = spinnerFrames[frameIndex];
-            frameIndex = (frameIndex + 1) % spinnerFrames.length;
-        }, 200); // Change frame every 200ms
+            let spinnerFrames = ['[|]', '[/]', '[-]', '[\\]'];
+            let frameIndex = 0;
+            let spinnerInterval = setInterval(() => {
+                loadingSpinner.textContent = spinnerFrames[frameIndex];
+                frameIndex = (frameIndex + 1) % spinnerFrames.length;
+            }, 200); // Change frame every 200ms
 
-        fetch('/generate-music', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                chord_progression: chord_progression_value,
-            }),
-            credentials: 'include' 
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.audio_url) {
-                    // Play newly generated song
-                    audioPlayer.src = data.audio_url;
-                    audioPlayer.play();
-                    // Update the text displaying the current song name
-                    document.getElementById('textbox').textContent = data.song_name;
-                }
+            fetch('/generate-music', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    chord_progression: chord_progression_value,
+                    bpm: bpmValue
+                }),
+                credentials: 'include'
             })
-            .catch(error => console.error('Error:', error))
-            .finally(() => {
-            // Stop and hide spinner
-            clearInterval(spinnerInterval);
-            loadingSpinner.style.display = 'none';
-        });
+                .then(response => response.json())
+                .then(data => {
+                    if (data.audio_url) {
+                        // Play newly generated song
+                        audioPlayer.src = data.audio_url;
+                        audioPlayer.play();
+                        // Update the text displaying the current song name
+                        document.getElementById('textbox').textContent = data.song_name;
+                    }
+                })
+                .catch(error => console.error('Error:', error))
+                .finally(() => {
+                // Stop and hide spinner
+                clearInterval(spinnerInterval);
+                loadingSpinner.style.display = 'none';
+            });
+        }
     });
 
     playButton.addEventListener('click', function () {

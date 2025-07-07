@@ -70,6 +70,20 @@ p span {
     width: 200px;
 }
 
+#bpm {
+    background-color: transparent;
+    border: 1px solid white;
+    color: white;
+    padding: 5px;
+    font-size: 16px;
+    width: 200px;
+}
+
+#bpm::placeholder  {
+    color: white; /* Make the placeholder text white */
+}
+
+
 #chord_progression::placeholder {
     color: white; /* Make the placeholder text white */
 }

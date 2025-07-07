@@ -489,7 +489,7 @@ def testing_generation_function():
                                         os.path.join(script_dir, 'tmp', 'output.mid'))
 
     mid_to_mp3(os.path.join(script_dir, 'tmp', 'output.mid'),
-               os.path.join(script_dir, 'tmp', 'FluidR3_GM_GS.sf2'),
+               os.path.join(script_dir, 'tmp', 'SoundFont.sf2'),
                os.path.join(script_dir, 'tmp', 'output.mp3'))
     print('convert fin')
 

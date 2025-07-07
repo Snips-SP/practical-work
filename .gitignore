@@ -7,7 +7,7 @@
 /webserver/backend/ml_model/tmp/
 /output.mid
 /gpt_model_state_dict.ph
-/webserver/backend/FluidR3_GM_GS.sf2
+/webserver/backend/SoundFont.sf2
 /webserver/backend/gpt_model_state_dict.ph
 /webserver/backend/ml_model/ldp_5_dataset/
 /webserver/backend/ml_model/lpd_5/
@@ -15,7 +15,7 @@
 /webserver/backend/ml_model/tmp/
 /webserver/static/music/
 /ExampleSongs/
-/webserver/backend/FluidR3_GM_GS.sf2
+/webserver/backend/SoundFont.sf2
 /webserver/backend/ml_model/ldp_5_dataset_fully_modulated/
 /
 

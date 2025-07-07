@@ -67,6 +67,7 @@ def generate_music():
 
     # Get chords from the user
     textbox = request.json.get('chord_progression', [])
+    bpm = request.json.get('bpm', 80)
 
     # Bring chords into right format
     # From A:16|B:32|C:16|D:8 -> [A, B, C, D], [16, 32, 16, 8]
@@ -90,7 +91,7 @@ def generate_music():
     tmp_mid_file = os.path.join('backend', 'tmp', f'{user_id}_tmp.mid')
     generate_from_chords(chords,
                          timings,
-                         80,
+                         bpm,
                          os.path.join('backend', 'gpt.ph'),
                          tmp_mid_file)
     # Trim and convert to mp3

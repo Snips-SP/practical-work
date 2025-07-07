@@ -25,9 +25,9 @@
             <div class="controls">
                 <div class="top-controls">
                     <button id="generate-button">Gen</button>
-
                     <input type="text" id="chord_progression" placeholder="Enter chord progression...">
                 </div>
+                <label for="bpmSlider">BPM   <input type="text" id="bpm" placeholder="Enter bpm..."></label>
                 <div class="bottom-controls">
                     <button id="play-button"> II </button>
                     <div class="volume-wrapper">
@@ -39,7 +39,6 @@
                     <button id="skip"> >>I </button>
                 </div>
                 <div>
-                    <!-- TODO: Generated audio files display a wrong total duration. Test mp3 do not. -->
                     <span id="currentTime">0:00</span> / <span id="totalTime">0:00</span>
                 </div>
             </div>
