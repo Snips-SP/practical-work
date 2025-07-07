@@ -127,6 +127,7 @@ def train(continue_from: str = None):
     file_name = 'gpt_model_state_dict_epoch_'
     num_epochs = 2
     batch_size = 16
+    learning_rate = 1e-4
 
     print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
 
@@ -193,7 +194,7 @@ def train(continue_from: str = None):
     loss_fn = CrossEntropyLoss(ignore_index=EncodingConfig.padding_token)
 
     # Define optimizer and learning rate scheduler
-    optimizer = AdamW(model.parameters(), lr=1e-4)
+    optimizer = AdamW(model.parameters(), lr=learning_rate)
 
     # Compile model for additional training speed
     # Torch compile uses the triton backend, which I have not installed.
