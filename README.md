@@ -114,7 +114,7 @@ CHORD:DURATION|CHORD:DURATION|...
 ```
 
 - **CHORD**: Any chord (major, minor, extended, etc.) with any root note.
-- **DURATION**: Length of the chord in beats or ticks.
+- **DURATION**: Length of the chord in sixtheenth notes.
 
 ### Example
 
