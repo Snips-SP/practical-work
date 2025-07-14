@@ -1,13 +1,14 @@
-import re
-from .dataloader import GPT2Dataset, GPT2RAMDataset
+from backend.ml_model.dataloader import GPT2Dataset, GPT2RAMDataset
 from transformers import GPT2LMHeadModel, GPT2Config, get_scheduler
-from tqdm import tqdm
-from torch.optim import AdamW
 import torch
-import os
+from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
-import math
 from torch.nn import CrossEntropyLoss
+from tqdm import tqdm
+import argparse
+import re
+import math
+import os
 
 
 class EncodingConfig:
@@ -120,52 +121,100 @@ def get_latest_checkpoint(directory, name):
         return None  # No valid checkpoint found
 
 
-def train(continue_from: str = None):
+def get_device(preferred: str = None) -> str:
+    # Normalize and check if a preferred device was given
+    preferred = preferred.lower() if preferred else None
+
+    # Check if the preferred device is available
+    if preferred == 'xpu' and hasattr(torch, 'xpu') and torch.xpu.is_available():
+        return 'xpu'
+    elif preferred == 'cuda' and torch.cuda.is_available():
+        return 'cuda'
+    elif preferred == 'cpu':
+        return 'cpu'
+
+    # Fallback to automatic selection
+    if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        return 'xpu'
+    elif torch.cuda.is_available():
+        return 'cuda'
+    else:
+        return 'cpu'
+
+
+def train(num_epochs: int,
+          batch_size: int = 16,
+          learning_rate: float = 1e-4,
+          lr_scheduler: str = 'cosine',
+          gradient_checkpointing: bool = False,
+          RAM_dataset: bool = False,
+          device: str = None,
+          continue_from: str = None):
     # We assume the root path is the current script path
     root_path = os.path.dirname(os.path.abspath(__file__))
-    # Set training parameters
-    file_name = 'gpt_model_state_dict_epoch_'
-    num_epochs = 2
-    batch_size = 16
-    learning_rate = 1e-4
+    # Name for state directories
+    state_dict_file_name = 'gpt_model_state_dict_epoch_'
 
-    print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
-
-    # Use appropriate gpu or cpu
-    device = ('xpu' if torch.xpu.is_available() else
-              'cuda' if torch.cuda.is_available() else
-              'cpu')
+    # Use referred device from user or chose it automatically
+    device = get_device(device)
     print('Using device:', device)
 
-    # Instantiate GPT-2 model
-    model = GPT2LMHeadModel(NetworkConfig.config)
-
-    # Define a function to initialize weights
-    def init_weights(module):
-        if isinstance(module, torch.nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, torch.nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    # Apply the weight initialization
-    model.apply(init_weights)
-
-    # Search for ph file to continue training from this file
+    # Search for config and ph file to continue training from this file
+    continue_from = os.path.join(root_path, continue_from)
     if continue_from is not None:
-        if os.path.isdir(continue_from):
-            model_path = get_latest_checkpoint(continue_from, file_name)
-            print(f'Continuing from directory: {continue_from}')
-            print(f'With state dict: {model_path}')
+        # Check if all relevant files and folders exist
+        if not os.path.isdir(continue_from):
+            raise FileNotFoundError('Directory for loading cannot be found.')
 
-            model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
-        else:
-            raise FileNotFoundError('Directory for loading cannot be found')
+        model_path = get_latest_checkpoint(continue_from, state_dict_file_name)
+        config_path = os.path.join(continue_from, f'config.json')
+
+        if model_path is None:
+            raise FileNotFoundError('No state dictionary not found in folder.')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError('No config file found in folder.')
+
+        print(f'Continuing from directory: {continue_from}')
+        print(f'With state dict: {model_path}')
+        print(f'And config from: {config_path}')
+
+        # Load config
+        config = GPT2Config.from_json_file(config_path)
+        # Create model from loaded configuration
+        model = GPT2LMHeadModel(config)
+        # Load model weights
+        model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+    else:
+        print(f'Training from scratch.')
+
+        config = NetworkConfig.config
+
+        # Instantiate GPT-2 model
+        model = GPT2LMHeadModel(config)
+
+        # Define a function to initialize weights
+        def init_weights(module):
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if module.bias is not None:
+                    torch.nn.init.zeros_(module.bias)
+            elif isinstance(module, torch.nn.Embedding):
+                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+        # Apply the weight initialization
+        model.apply(init_weights)
+
+    # Print out relevant gpt2 configurations
+    print('GPT2 config: ')
+    for key in ['n_positions', 'n_ctx', 'n_embd', 'n_layer', 'n_head']:
+        print(f'   {key} = {config.to_dict()[key]}')
+    print('')
 
     # Get dataset and dataloader
-    dataset = GPT2RAMDataset(os.path.join(root_path, 'ldp_5_dataset'))
-
+    if RAM_dataset:
+        dataset = GPT2RAMDataset(os.path.join(root_path, 'ldp_5_dataset'))
+    else:
+        dataset = GPT2Dataset(os.path.join(root_path, 'ldp_5_dataset'))
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -178,15 +227,17 @@ def train(continue_from: str = None):
     # Create the directory if it doesn't exist
     os.makedirs(log_dir, exist_ok=True)
 
+    # Save current config into new log directory (it will be named config.json)
+    config.save_pretrained(log_dir)
+
     # Initialize SummaryWriter with the new log directory
     writer = SummaryWriter(log_dir=log_dir)
     print(f'Logging to: {log_dir}')
 
-    # Training loop
+    # Define progress bar
     num_training_steps = num_epochs * len(dataloader)
-    progress_bar = tqdm(range(num_training_steps), desc='Training Progress')
 
-    # Make adjustment to the model
+    # Set model to train and move it to device
     model.train()
     model.to(device)
 
@@ -206,20 +257,28 @@ def train(continue_from: str = None):
     # but it takes a lot of time to get running.
     # model = torch.compile(model)
 
-    # Disable caching as it conflicts with gradient_checkpointing
-    # model.config.use_cache = False
+    if gradient_checkpointing:
+        # Enable memory optimizations (we can get away with less memory)
+        model.gradient_checkpointing_enable()
 
-    # Enable memory optimizations (we can get away with less memory)
-    # model.gradient_checkpointing_enable()
+        # Disable caching as it conflicts with gradient_checkpointing
+        model.config.use_cache = False
 
-    # Cosine Annealing with Warmup as learning rate scheduler
-    lr_scheduler = get_scheduler(
-        'cosine',
-        optimizer=optimizer,
-        num_warmup_steps=500,
-        num_training_steps=num_training_steps
-    )
+    if lr_scheduler == 'cosine':
+        # Cosine Annealing with Warmup as learning rate scheduler
+        lr_scheduler = get_scheduler(
+            'cosine',
+            optimizer=optimizer,
+            num_warmup_steps=500,
+            num_training_steps=num_training_steps
+        )
+    else:
+        raise NotImplemented(f'Learning rate scheduler {lr_scheduler} not implemented.')
 
+    # Start training
+    print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
+    print(' ')
+    progress_bar = tqdm(range(num_training_steps), desc='Training Progress')
     train_loss = []
     for epoch in range(num_epochs):
         total_loss = 0
@@ -264,37 +323,65 @@ def train(continue_from: str = None):
             # Optimizer step
             optimizer.step()
 
-            # Update learning rate
-            lr_scheduler.step()
+            if lr_scheduler is not None:
+                # Update learning rate
+                lr_scheduler.step()
 
-            # Log some statistics
+            # Calculate and log stats
             detached_loss = loss.detach().cpu().item()
 
             total_loss += detached_loss
             global_step = epoch * len(dataloader) + batch_idx
             writer.add_scalar('Training Loss', detached_loss, global_step)
-            writer.add_scalar('Learning Rate', lr_scheduler.get_last_lr()[0], global_step)
+            if lr_scheduler is not None:
+                writer.add_scalar('Learning Rate', lr_scheduler.get_last_lr()[0], global_step)
             writer.add_scalar('Gradient Norm', total_norm, global_step)
             # Add if statement to prevent numerical overflow
             perplexity = math.exp(detached_loss) if detached_loss < 20 else float('inf')
             writer.add_scalar('Perplexity', perplexity, global_step)
 
-            progress_bar.set_postfix({
+            display_stats = {
                 'Batch': batch_idx,
                 'Loss': f'{detached_loss:.4f}',
-                'LR': f'{lr_scheduler.get_last_lr()[0]:.6f}',
                 'GradNorm': f'{total_norm:.2f}',
                 'Perplexity': f'{perplexity:.2f}'
-            })
+            }
+            if lr_scheduler is not None:
+                display_stats['LR'] = f'{lr_scheduler.get_last_lr()[0]:.6f}'
 
+            # Display stats in progress bar
+            progress_bar.set_postfix(display_stats)
             progress_bar.update(1)
 
+        # Log total train loss over epoch
         train_loss.append(total_loss / len(dataset))
-        torch.save(model.state_dict(), os.path.join(log_dir, f'{file_name}{epoch}.ph'))
+        writer.add_scalar('Total Training Loss', total_loss / len(dataset), global_step)
+        # Save state dict after each epoch
+        torch.save(model.state_dict(), os.path.join(log_dir, f'{state_dict_file_name}{epoch}.ph'))
 
     print('Training completed!')
     writer.close()
 
 
 if __name__ == '__main__':
-    train('.')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--num_epochs', type=int, required=True, help='Number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for optimizer')
+    parser.add_argument('--lr_scheduler', type=str, default='cosine', choices=['cosine'], help='Learning rate scheduler type')
+    parser.add_argument('--gradient_checkpointing', action='store_true', help='Enable gradient checkpointing to save memory')
+    parser.add_argument('--RAM_dataset', action='store_true', help='Load entire dataset into memory')
+    parser.add_argument('--device', type=str, default=None, help='Device to use: "cpu", "cuda", or "xpu" (auto-select if None)')
+    parser.add_argument('--continue_from', type=str, default=None, help='Path to a directory to continue training from a checkpoint')
+
+    args = parser.parse_args()
+
+    train(num_epochs=args.num_epochs,
+          batch_size=args.batch_size,
+          learning_rate=args.learning_rate,
+          lr_scheduler=args.lr_scheduler,
+          gradient_checkpointing=args.gradient_checkpointing,
+          RAM_dataset=args.RAM_dataset,
+          device=args.device,
+          continue_from=args.continue_from)
+

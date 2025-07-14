@@ -1,9 +1,9 @@
-import os
-import subprocess
+from backend.ml_model.train import EncodingConfig
 from pydub.silence import split_on_silence
 from pydub import AudioSegment
 from pydub.utils import which
-from .train import EncodingConfig
+import subprocess
+import os
 
 # Finds ffmpeg in system path
 ffmpeg_path = which('ffmpeg')
@@ -50,7 +50,11 @@ def chord2tokens(chord):
     if chord is None or chord == 'auto':
         return [EncodingConfig.time_note]
     else:
-        base = ['E', 'F', 'G', 'A', 'B', 'C', 'D'].index(chord[0])
+        notes = ['E', 'F', 'G', 'A', 'B', 'C', 'D']
+        if chord[0] in notes:
+            base = notes.index(chord[0])
+        else:
+            raise ValueError(f'Invalid chord root note: {chord[0]}')
         basenote = [4, 5, 7, 9, 11, 12, 14][base]  # Bass
         chordtype = chord[1:]
         if len(chord) > 1 and chord[1] == '#':

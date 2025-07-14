@@ -1,10 +1,11 @@
-from .helper import chord2tokens
-from .train import NetworkConfig, EncodingConfig
+from backend.ml_model.helper import chord2tokens
+from backend.ml_model.train import EncodingConfig, get_latest_checkpoint
 import numpy as np
 import torch
-from transformers import GPT2LMHeadModel
+from transformers import GPT2LMHeadModel, GPT2Config
 import pypianoroll
 from tqdm import trange
+import os
 
 
 def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=128):
@@ -55,15 +56,36 @@ def generate_from_context(model, context, device):
     return new_tokens.cpu().squeeze(0).numpy()
 
 
-def generate_from_chords(chords: list, timings: list, tempo: int,  model_path: str, output: str = 'output.mid'):
+def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: str, output: str = 'output.mid'):
     # Use appropriate gpu or cpu
     device = ('xpu' if torch.xpu.is_available() else
               'cuda' if torch.cuda.is_available() else
               'cpu')
 
-    model = GPT2LMHeadModel(NetworkConfig.config)
+    # Check if run folder exists
+    if not os.path.isdir(model_dir):
+        raise FileNotFoundError('Could not find run directory to load model state dict and config file from')
+
+    state_dict_file_name = 'gpt_model_state_dict_epoch_'
+    model_path = get_latest_checkpoint(model_dir, state_dict_file_name)
+    config_path = os.path.join(model_dir, f'config.json')
+
+    if model_path is None:
+        raise FileNotFoundError('No state dictionary not found in folder.')
+    if not os.path.exists(config_path):
+        raise FileNotFoundError('No config file found in folder.')
+
+    print(f'Loading model from: {model_dir}')
+
+    # Load config
+    config = GPT2Config.from_json_file(config_path)
+    # Create model from loaded configuration
+    model = GPT2LMHeadModel(config)
+    # Load model weights
     model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+    # Move to device
     model.to(device)
+    model.eval()
 
     # Encode chords into tokens
     tokens = [chord2tokens(chord) for chord in chords]

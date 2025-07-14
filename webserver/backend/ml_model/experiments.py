@@ -1,25 +1,21 @@
-import glob
-
-import pypianoroll
-
-from .train import EncodingConfig
-from .generate import generate_from_chords, sliding_window_generate, generate_from_context
-from .dataloader import GPT2Dataset
-import numpy as np
-from tqdm import tqdm
-import os
-import torch
-import time
+from backend.ml_model.train import EncodingConfig
+from backend.ml_model.generate import generate_from_chords, sliding_window_generate, generate_from_context
+from backend.ml_model.dataloader import GPT2Dataset
+from backend.ml_model.train import NetworkConfig
+from backend.ml_model.helper import chord2tokens, mid_to_mp3
 import matplotlib
 import matplotlib.pyplot as plt
-from transformers import GPT2LMHeadModel, GPT2Config
-from .train import NetworkConfig
-from .helper import chord2tokens, mid_to_mp3
-import torch
-from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArguments, DataCollatorForLanguageModeling
+import numpy as np
+from tqdm import tqdm
+import pypianoroll
+from transformers import GPT2Tokenizer, GPT2LMHeadModel, GPT2Config
 from datasets import Dataset
+import torch
 from torch.optim import AdamW
 import pickle
+import os
+import glob
+import time
 
 EncodingConfig.initialize()
 

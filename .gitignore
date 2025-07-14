@@ -3,7 +3,6 @@
 /CP_Drums_Generation/
 /chord2melody-main/
 /choco-main/
-/webserver/backend/ml_model/runs/
 /webserver/backend/ml_model/tmp/
 /output.mid
 /gpt_model_state_dict.ph
@@ -11,11 +10,7 @@
 /webserver/backend/gpt_model_state_dict.ph
 /webserver/backend/ml_model/ldp_5_dataset/
 /webserver/backend/ml_model/lpd_5/
-/webserver/backend/ml_model/runs/
-/webserver/backend/ml_model/tmp/
 /webserver/static/music/
 /ExampleSongs/
-/webserver/backend/SoundFont.sf2
 /webserver/backend/ml_model/ldp_5_dataset_fully_modulated/
-/
 

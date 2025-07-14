@@ -1,12 +1,12 @@
-from train import EncodingConfig
+from backend.ml_model.train import EncodingConfig
 import pypianoroll
-import glob
-import pickle
-import gc
-import os
 from tqdm import tqdm
 import numpy as np
+import pickle
 from multiprocessing import Pool
+import glob
+import gc
+import os
 import argparse
 
 EncodingConfig.initialize()
@@ -61,6 +61,7 @@ class Runner:
         current_seq = []
         # Do data augmentation according to specified parameter 'da' in range [0-11]
         # All sequences are appended to the same list
+        ### TODO: Make downwards modulations possible i.e. +1 and -1
         for s in modulation[:self.number_of_modulations + 1]:
             pos = 0
             # Create an encoding sequence for each modulation
