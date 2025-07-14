@@ -65,22 +65,21 @@ Place the extracted dataset in the same directory as `encode.py`.
 ### 2. Encode Dataset
 
 ```bash
-python encode.py
+python -m backend.ml_model.encode --help
 ```
 
-This will generate the `ldp_5_dataset/` directory containing the `.npz` files for training.
+With this module the `ldp_5_dataset/` directory containing the `.npz` files for training can be generated.
 
 ### 3. Start Training
 
 ```bash
-python train.py
+python -m backend.ml_model.train --help
 ```
 
+With the train module new versions from the GPT2 model can be trained with varying hyperparameters.
 #### Training Details
 
-- Configure model hyperparameters (`num_epochs`, `learning_rate`, `batch_size`) in the `train` function in `train.py`.
-- Model architecture is defined in the `NetworkConfig` class.
-- To continue training from a previous run, specify the path to the previous `run` directory in the `train` function.
+- Model architecture can be changed in the `NetworkConfig` class in `train.py`.
 
 ---
 
@@ -95,13 +94,12 @@ python run.py
 This launches a local web interface where users can:
 
 - Input chord progressions
-- Generate music using the GPT-2 model
-- Download or listen to generated outputs (in MP3 and MIDI formats)
+- Generate music using the selected GPT-2 model from the run folder
+- Listen to generated outputs in MP3
 
 ### Note
 
-- Model weights must be placed in `backend/gpt.pt`
-- The `SoundFont.sf2` soundfont file (e.g., `FluidR3_GM_GS.sf2`) must be in the `backend/` folder as well. (https://musical-artifacts.com/artifacts/738)
+- The `SoundFont.sf2` soundfont file (e.g., `FluidR3_GM_GS.sf2`) must be in the `backend/` folder. (https://musical-artifacts.com/artifacts/738)
 
 ---
 
@@ -170,9 +168,7 @@ webserver/
 │   │   ├── generate.py
 │   │   ├── helper.py
 │   │   └── train.py              # Train your own model
-│   ├── __init__.py
 │   ├── SoundFont.sf2             # SoundFont file for rendering MIDI to audio
-│   ├── gpt.ph                    # Trained GPT-2 model weights
 │   └── server.py                 # Web server backend
 │
 ├── static/
