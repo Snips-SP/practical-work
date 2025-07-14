@@ -160,8 +160,9 @@ def train(num_epochs: int,
     print('Using device:', device)
 
     # Search for config and ph file to continue training from this file
-    continue_from = os.path.join(root_path, continue_from)
+
     if continue_from is not None:
+        continue_from = os.path.join(root_path, continue_from)
         # Check if all relevant files and folders exist
         if not os.path.isdir(continue_from):
             raise FileNotFoundError('Directory for loading cannot be found.')
