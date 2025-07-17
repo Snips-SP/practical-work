@@ -2,6 +2,7 @@ from backend.ml_model.generate import generate_from_chords
 from backend.ml_model.helper import mid_to_mp3
 from backend.ml_model.train import get_latest_checkpoint
 from flask import Flask, render_template, jsonify, session, request
+from urllib.parse import quote
 import uuid
 import os.path
 
@@ -23,26 +24,27 @@ def index():
 
 @app.route('/play-song', methods=['GET'])
 def play_song():
-    # Check for the song in the user session and get its full path
     song = request.args.get('song')
     if song:
         user_id = session.get('user_id')
-        # Check 
         if user_id is None:
             return jsonify({'error': 'Session expired or invalid'}), 401
 
         session_dir = os.path.join('static', 'music', user_id)
-        # Get generated songs from user
         songs = [os.path.splitext(f)[0] for f in os.listdir(session_dir) if f.endswith('.mp3')]
-        # Check if the song exists
+
         if song not in songs:
             return jsonify({'error': 'No song found'}), 400
-        # Create full song path
-        full_song_path = os.path.join(session_dir, f'{song}.mp3')
 
-        return jsonify({'audio_url': full_song_path})
+        filename = f'{song}.mp3'
+        # Encode just the filename, not the entire path
+        encoded_filename = quote(filename)
+        audio_url = f'/static/music/{user_id}/{encoded_filename}'
+
+        return jsonify({'audio_url': audio_url})
 
     return jsonify({'error': 'No song found'}), 400
+
 
 
 @app.route('/get-songs', methods=['GET'])
