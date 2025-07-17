@@ -95,5 +95,7 @@ def chord2tokens(chord):
             return [basenote, offset, offset + 3, offset + 7, offset + 11]
         elif chordtype == '7-5':
             return [basenote, offset, offset + 4, offset + 6, offset + 10]
+        elif chordtype == '7#5':
+            return [basenote, offset, offset + 4, offset + 8, offset + 10]
         else:
             return [basenote]

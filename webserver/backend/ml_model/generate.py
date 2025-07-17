@@ -8,7 +8,7 @@ from tqdm import trange
 import os
 
 
-def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=128):
+def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=256):
     device = model.device
     generated_tokens = torch.tensor(context, device=device, dtype=torch.int64).unsqueeze(0)
     new_tokens_count = 0

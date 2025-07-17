@@ -69,8 +69,8 @@ class NetworkConfig:
         n_positions=1024,  # Maximum sequence length
         n_ctx=256,  # Context window size
         n_embd=256,  # Embedding size
-        n_layer=2,  # Number of transformer layers
-        n_head=2,  # Number of attention heads
+        n_layer=4,  # Number of transformer layers
+        n_head=4,  # Number of attention heads
         pad_token_id=EncodingConfig.padding_token,  # 422
     )
 
@@ -149,7 +149,8 @@ def train(num_epochs: int,
           gradient_checkpointing: bool = False,
           RAM_dataset: bool = False,
           device: str = None,
-          continue_from: str = None):
+          continue_from: str = None,
+          config=None):
     # We assume the root path is the current script path
     root_path = os.path.dirname(os.path.abspath(__file__))
     # Name for state directories
@@ -188,7 +189,8 @@ def train(num_epochs: int,
     else:
         print(f'Training from scratch.')
 
-        config = NetworkConfig.config
+        if config is None:
+            config = NetworkConfig.config
 
         # Instantiate GPT-2 model
         model = GPT2LMHeadModel(config)
@@ -376,13 +378,58 @@ if __name__ == '__main__':
     parser.add_argument('--continue_from', type=str, default=None, help='Path to a directory to continue training from a checkpoint')
 
     args = parser.parse_args()
+    
+    if True:
+        # Train with same parameters but different configs
+        for c_path in ['runs/GPT2_Model_6', 'runs/GPT2_Model_7', 'runs/GPT2_Model_8']:
+            train(num_epochs=args.num_epochs,
+                  batch_size=args.batch_size,
+                  learning_rate=args.learning_rate,
+                  lr_scheduler=args.lr_scheduler,
+                  gradient_checkpointing=args.gradient_checkpointing,
+                  RAM_dataset=args.RAM_dataset,
+                  device=args.device,
+                  continue_from=c_path)
+    else:
+        config1 = GPT2Config(
+            vocab_size=EncodingConfig.vocab_size,  # 423
+            n_positions=1024,  # Maximum sequence length
+            n_ctx=256,  # Context window size
+            n_embd=256,  # Embedding size
+            n_layer=2,  # Number of transformer layers
+            n_head=2,  # Number of attention heads
+            pad_token_id=EncodingConfig.padding_token,  # 422
+        )
 
-    train(num_epochs=args.num_epochs,
-          batch_size=args.batch_size,
-          learning_rate=args.learning_rate,
-          lr_scheduler=args.lr_scheduler,
-          gradient_checkpointing=args.gradient_checkpointing,
-          RAM_dataset=args.RAM_dataset,
-          device=args.device,
-          continue_from=args.continue_from)
+        config2 = GPT2Config(
+            vocab_size=EncodingConfig.vocab_size,  # 423
+            n_positions=1024,  # Maximum sequence length
+            n_ctx=256,  # Context window size
+            n_embd=256,  # Embedding size
+            n_layer=4,  # Number of transformer layers
+            n_head=4,  # Number of attention heads
+            pad_token_id=EncodingConfig.padding_token,  # 422
+        )
+
+        config3 = GPT2Config(
+            vocab_size=EncodingConfig.vocab_size,  # 423
+            n_positions=1024,  # Maximum sequence length
+            n_ctx=256,  # Context window size
+            n_embd=240,  # Embedding size
+            n_layer=6,  # Number of transformer layers
+            n_head=6,  # Number of attention heads
+            pad_token_id=EncodingConfig.padding_token,  # 422
+        )
+
+        # Train with same parameters but different configs
+        for config in [config1, config2, config3]:
+            train(num_epochs=args.num_epochs,
+                  batch_size=args.batch_size,
+                  learning_rate=args.learning_rate,
+                  lr_scheduler=args.lr_scheduler,
+                  gradient_checkpointing=args.gradient_checkpointing,
+                  RAM_dataset=args.RAM_dataset,
+                  device=args.device,
+                  continue_from=args.continue_from,
+                  config=config)
 

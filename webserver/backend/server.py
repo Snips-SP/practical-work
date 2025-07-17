@@ -164,4 +164,4 @@ def generate_music():
 
 
 def run():
-    app.run()
+    app.run(host='0.0.0.0')

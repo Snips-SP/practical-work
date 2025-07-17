@@ -16,10 +16,61 @@ import pickle
 import os
 import glob
 import time
+import requests
 
 EncodingConfig.initialize()
 
 matplotlib.use('TkAgg')
+
+
+def generating_for_model_paths():
+    model_paths = [
+        'backend/ml_model/runs/GPT2_Tiny_1',
+        'backend/ml_model/runs/GPT2_Tiny_2',
+        'backend/ml_model/runs/GPT2_Tiny_3',
+        'backend/ml_model/runs/GPT2_Small_1',
+        'backend/ml_model/runs/GPT2_Small_2',
+        'backend/ml_model/runs/GPT2_Small_3',
+        'backend/ml_model/runs/GPT2_Medium_1',
+        'backend/ml_model/runs/GPT2_Medium_2',
+        'backend/ml_model/runs/GPT2_Medium_3',
+    ]
+    URL = 'http://localhost:5000/generate-music'
+    SESSION_ID = 'dcecd20d-137a-4f53-af7f-5c3a8cf5ea94'
+    BPM = 100
+
+    CHORD_PROGRESSIONS = [
+        'Am:32|C:32|D:32|F:32', # House of the rising sun (simple)
+        'Cm7:32|Fm7:32|Dm7-5:16|G7#5:16|Cm7:32' # Blue bossa (complex)
+    ]
+
+    # Preserver session over all post requests
+    session = requests.Session()
+
+    def send_post(model_path, chord_progression):
+        payload = {
+            'session_id': SESSION_ID,
+            'bpm': BPM,
+            'model_path': model_path,
+            'chord_progression': chord_progression
+        }
+
+        try:
+            print(f'Sending post for {model_path} and {chord_progression}')
+            response = session.post(URL, json=payload)
+            if response.status_code == 200:
+                print(f'Success: {model_path} | {chord_progression}')
+            else:
+                print(f'Error {response.status_code}: {response.text}')
+            return response.status_code == 200
+        except requests.RequestException as e:
+            print(f'Request failed: {e}')
+            return False
+
+    # Generate chord progressions for each model
+    for model_path in model_paths:
+        for chord in CHORD_PROGRESSIONS:
+            send_post(model_path, chord)
 
 
 def test_encoding_decoding():
@@ -631,3 +682,7 @@ def calculate_model_memory_usage():
     after_mem = torch.xpu.memory_allocated()
 
     print(f'Model memory usage: {(after_mem - before_mem) / (1024 ** 2):.2f} MB')
+
+
+if __name__ == '__main__':
+    generating_for_model_paths()
