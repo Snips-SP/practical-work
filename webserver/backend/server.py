@@ -46,7 +46,6 @@ def play_song():
     return jsonify({'error': 'No song found'}), 400
 
 
-
 @app.route('/get-songs', methods=['GET'])
 def get_songs():
     # Get a list of all songs in the current user directory

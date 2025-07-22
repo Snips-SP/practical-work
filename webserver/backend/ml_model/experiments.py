@@ -40,8 +40,8 @@ def generating_for_model_paths():
     BPM = 100
 
     CHORD_PROGRESSIONS = [
-        'Am:32|C:32|D:32|F:32', # House of the rising sun (simple)
-        'Cm7:32|Fm7:32|Dm7-5:16|G7#5:16|Cm7:32' # Blue bossa (complex)
+        'Am:32|C:32|D:32|F:32',  # House of the rising sun (simple)
+        'Cm7:32|Fm7:32|Dm7-5:16|G7#5:16|Cm7:32'  # Blue bossa (complex)
     ]
 
     # Preserver session over all post requests
@@ -130,7 +130,8 @@ def test_encoding_decoding():
 
     pr = []
     for i, t in enumerate(EncodingConfig.tracks):
-        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t], is_drum=(t == 'Drums')))
+        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t],
+                                            is_drum=(t == 'Drums')))
     mt_decoded = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=4)
 
     # Set a few flags to making working in the daw easier
@@ -527,20 +528,6 @@ def testing_generation():
     print('fin')
 
 
-def testing_generation_function():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    mid_location = generate_from_chords(['C', 'G', 'Am', 'F'],
-                                        [32, 32, 32, 32],
-                                        80,
-                                        os.path.join(script_dir, 'tmp', 'gpt_model_state_dict.ph'),
-                                        os.path.join(script_dir, 'tmp', 'output.mid'))
-
-    mid_to_mp3(os.path.join(script_dir, 'tmp', 'output.mid'),
-               os.path.join(script_dir, 'tmp', 'SoundFont.sf2'),
-               os.path.join(script_dir, 'tmp', 'output.mp3'))
-    print('convert fin')
-
-
 def test_chunk_sizes():
     # Define the directory path
     directory_path = 'tmp'
@@ -684,5 +671,32 @@ def calculate_model_memory_usage():
     print(f'Model memory usage: {(after_mem - before_mem) / (1024 ** 2):.2f} MB')
 
 
+def testing_generation_function(simple: bool = True, gpt_version: str = None):
+    if gpt_version is None:
+        raise ValueError('Chose valid gpt version from runs folder')
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    if simple:
+        chord_progression = ['C', 'G', 'Am', 'F']
+        chord_timings = [32, 32, 32, 32]
+    else:
+        chord_progression = ['Cm7', 'Fm7', 'Dm7-5', 'G7#5']
+        chord_timings = [32, 32, 32, 32]
+
+    file_name = '_'.join(chord_progression)
+
+    midi_file = os.path.join(script_dir, 'tmp', f'{file_name}.mid')
+
+    generate_from_chords(chord_progression, chord_timings, 100,
+                         model_dir=os.path.join(script_dir, 'runs', gpt_version),
+                         output=midi_file)
+
+    mid_to_mp3(midi_file,
+               os.path.join(script_dir, 'tmp', 'SoundFont.sf2'),
+               os.path.join(script_dir, 'tmp', f'{file_name}.mp3'))
+    print('convert fin')
+
+
 if __name__ == '__main__':
-    generating_for_model_paths()
+    testing_generation_function(False, 'GPT_Tiny_1')
