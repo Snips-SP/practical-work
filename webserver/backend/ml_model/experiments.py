@@ -1,5 +1,5 @@
 from backend.ml_model.train import EncodingConfig
-from backend.ml_model.generate import generate_from_chords, sliding_window_generate, generate_from_context
+from backend.ml_model.generate import generate_from_chords, sliding_window_generate
 from backend.ml_model.dataloader import GPT2Dataset
 from backend.ml_model.train import NetworkConfig
 from backend.ml_model.helper import chord2tokens, mid_to_mp3
@@ -681,22 +681,19 @@ def testing_generation_function(simple: bool = True, gpt_version: str = None):
         chord_progression = ['C', 'G', 'Am', 'F']
         chord_timings = [32, 32, 32, 32]
     else:
-        chord_progression = ['Cm7', 'Fm7', 'Dm7-5', 'G7#5']
-        chord_timings = [32, 32, 32, 32]
+        chord_progression = ['Cm7', 'Fm7', 'Dm7-5', 'G7#5', 'Cm7']
+        chord_timings = [32, 32, 32, 32, 32]
 
-    file_name = '_'.join(chord_progression)
+    file_name = '_'.join(chord_progression) + f'_{gpt_version}'
 
     midi_file = os.path.join(script_dir, 'tmp', f'{file_name}.mid')
+    model_file = os.path.join(script_dir, 'runs', gpt_version)
 
-    generate_from_chords(chord_progression, chord_timings, 100,
-                         model_dir=os.path.join(script_dir, 'runs', gpt_version),
-                         output=midi_file)
+    generate_from_chords(chord_progression, chord_timings, 100, model_file, midi_file)
 
-    mid_to_mp3(midi_file,
-               os.path.join(script_dir, 'tmp', 'SoundFont.sf2'),
-               os.path.join(script_dir, 'tmp', f'{file_name}.mp3'))
+    mid_to_mp3(midi_file, os.path.join(script_dir, 'tmp', 'SoundFont.sf2'), os.path.join(script_dir, 'tmp', f'{file_name}.mp3'))
     print('convert fin')
 
 
 if __name__ == '__main__':
-    testing_generation_function(False, 'GPT_Tiny_1')
+    testing_generation_function(False, 'GPT2_Small_3')

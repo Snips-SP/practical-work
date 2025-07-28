@@ -5,14 +5,32 @@ from pydub.utils import which
 import subprocess
 import os
 
-# Finds ffmpeg in system path
-ffmpeg_path = which('ffmpeg')
-AudioSegment.converter = ffmpeg_path
-
 
 def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
+    """Converts a MIDI file to an MP3 file using a SoundFont.
+
+    This function synthesizes the MIDI file into a temporary WAV file
+    using FluidSynth and the provided SF2 SoundFont. It then converts the
+    WAV file to MP3, automatically trimming any leading or trailing silence
+    that FluidSynth might have added.
+
+    :param str mid_file: The path to the input MIDI file.
+    :param str sf2_file: The path to the SoundFont (.sf2) file.
+    :param str output_file: The path to save the resulting MP3 file,
+                        defaults to 'output.mp3'.
+    :raises AssertionError: If the `mid_file` or `sf2_file` is not found.
+    :raises FileNotFoundError: If ffmpeg is not found in the system path.
+    :returns: None. The function saves the output directly to a file.
+    :rtype: None
+    """
     assert os.path.isfile(mid_file), 'Mid file not found'
     assert os.path.isfile(sf2_file), 'sf2 file not found'
+
+    # Finds ffmpeg in the system path
+    ffmpeg_path = which('ffmpeg')
+    if ffmpeg_path is None:
+        raise FileNotFoundError('ffmpeg not found in system path')
+    AudioSegment.converter = ffmpeg_path
 
     # Create temporary wav file
     tmp_wav = 'tmp.wav'
@@ -46,56 +64,61 @@ def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
     os.remove(tmp_wav)
 
 
-def chord2tokens(chord):
-    if chord is None or chord == 'auto':
-        return [EncodingConfig.time_note]
+def chord2tokens(chord:str) -> list:
+    """Encodes a chord into a list of tokens.
+
+    :param str chord: The chord to encode, (e.g., 'C', 'Am', 'G7').
+    :return: A list of integer tokens representing the chord. The first token
+             is the root note for the bass, and subsequent tokens are for
+             the piano.
+    :rtype: list
+    """
+    notes = ['E', 'F', 'G', 'A', 'B', 'C', 'D']
+    if chord[0] in notes:
+        base = notes.index(chord[0])
     else:
-        notes = ['E', 'F', 'G', 'A', 'B', 'C', 'D']
-        if chord[0] in notes:
-            base = notes.index(chord[0])
-        else:
-            raise ValueError(f'Invalid chord root note: {chord[0]}')
-        basenote = [4, 5, 7, 9, 11, 12, 14][base]  # Bass
-        chordtype = chord[1:]
-        if len(chord) > 1 and chord[1] == '#':
-            basenote += 1
-            chordtype = chord[2:]
-        offset = basenote + EncodingConfig.note_size * 2 + 24  # Piano notes
-        if len(chordtype) == 0:
-            return [basenote, offset, offset + 4, offset + 7]
-        elif chordtype == 'm':
-            return [basenote, offset, offset + 3, offset + 7]
-        elif chordtype == '7':
-            return [basenote, offset, offset + 4, offset + 7, offset + 10]
-        elif chordtype == 'm7':
-            return [basenote, offset, offset + 3, offset + 7, offset + 10]
-        elif chordtype == 'M7':
-            return [basenote, offset, offset + 4, offset + 7, offset + 11]
-        elif chordtype == 'm7-5':
-            return [basenote, offset, offset + 3, offset + 6, offset + 10]
-        elif chordtype == 'dim':
-            return [basenote, offset, offset + 3, offset + 6, offset + 9]
-        elif chordtype == 'sus4':
-            return [basenote, offset, offset + 5, offset + 7]
-        elif chordtype == '7sus4':
-            return [basenote, offset, offset + 5, offset + 7, offset + 10]
-        elif chordtype == 'aug':
-            return [basenote, offset, offset + 4, offset + 8]
-        elif chordtype == 'm6':
-            return [basenote, offset, offset + 3, offset + 7, offset + 9]
-        elif chordtype == '7(9)':
-            return [basenote, offset, offset + 4, offset + 7, offset + 10, offset + 14]
-        elif chordtype == 'm7(9)':
-            return [basenote, offset, offset + 3, offset + 7, offset + 10, offset + 14]
-        elif chordtype == 'add9':
-            return [basenote, offset, offset + 4, offset + 7, offset + 14]
-        elif chordtype == '6':
-            return [basenote, offset, offset + 4, offset + 7, offset + 9]
-        elif chordtype == 'mM7':
-            return [basenote, offset, offset + 3, offset + 7, offset + 11]
-        elif chordtype == '7-5':
-            return [basenote, offset, offset + 4, offset + 6, offset + 10]
-        elif chordtype == '7#5':
-            return [basenote, offset, offset + 4, offset + 8, offset + 10]
-        else:
-            return [basenote]
+        raise ValueError(f'Invalid chord root note: {chord[0]}')
+    basenote = [4, 5, 7, 9, 11, 12, 14][base]  # Bass
+    chordtype = chord[1:]
+    if len(chord) > 1 and chord[1] == '#':
+        basenote += 1
+        chordtype = chord[2:]
+    offset = basenote + EncodingConfig.note_size * 2 + 24  # Piano notes
+    if len(chordtype) == 0:
+        return [basenote, offset, offset + 4, offset + 7]
+    elif chordtype == 'm':
+        return [basenote, offset, offset + 3, offset + 7]
+    elif chordtype == '7':
+        return [basenote, offset, offset + 4, offset + 7, offset + 10]
+    elif chordtype == 'm7':
+        return [basenote, offset, offset + 3, offset + 7, offset + 10]
+    elif chordtype == 'M7':
+        return [basenote, offset, offset + 4, offset + 7, offset + 11]
+    elif chordtype == 'm7-5':
+        return [basenote, offset, offset + 3, offset + 6, offset + 10]
+    elif chordtype == 'dim':
+        return [basenote, offset, offset + 3, offset + 6, offset + 9]
+    elif chordtype == 'sus4':
+        return [basenote, offset, offset + 5, offset + 7]
+    elif chordtype == '7sus4':
+        return [basenote, offset, offset + 5, offset + 7, offset + 10]
+    elif chordtype == 'aug':
+        return [basenote, offset, offset + 4, offset + 8]
+    elif chordtype == 'm6':
+        return [basenote, offset, offset + 3, offset + 7, offset + 9]
+    elif chordtype == '7(9)':
+        return [basenote, offset, offset + 4, offset + 7, offset + 10, offset + 14]
+    elif chordtype == 'm7(9)':
+        return [basenote, offset, offset + 3, offset + 7, offset + 10, offset + 14]
+    elif chordtype == 'add9':
+        return [basenote, offset, offset + 4, offset + 7, offset + 14]
+    elif chordtype == '6':
+        return [basenote, offset, offset + 4, offset + 7, offset + 9]
+    elif chordtype == 'mM7':
+        return [basenote, offset, offset + 3, offset + 7, offset + 11]
+    elif chordtype == '7-5':
+        return [basenote, offset, offset + 4, offset + 6, offset + 10]
+    elif chordtype == '7#5':
+        return [basenote, offset, offset + 4, offset + 8, offset + 10]
+    else:
+        return [basenote]
