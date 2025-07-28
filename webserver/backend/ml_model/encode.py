@@ -1,4 +1,4 @@
-from backend.ml_model.train import EncodingConfig
+from backend.ml_model.helper import EncodingConfig
 import pypianoroll
 from tqdm import tqdm
 import numpy as np

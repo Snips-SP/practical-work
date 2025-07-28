@@ -1,6 +1,5 @@
 from backend.ml_model.generate import generate_from_chords
 from backend.ml_model.helper import mid_to_mp3
-from backend.ml_model.train import get_latest_checkpoint
 from flask import Flask, render_template, jsonify, session, request
 from urllib.parse import quote
 import uuid
@@ -76,14 +75,7 @@ def get_models():
         model_dir_path = os.path.join(runs_dir, name)
         # Check if the path exists
         if os.path.isdir(model_dir_path):
-            # Check if both a state dict and a config file are present
-            state_dict_file_name = 'gpt_model_state_dict_epoch_'
-
-            model_path = get_latest_checkpoint(model_dir_path, state_dict_file_name)
-            config_path = os.path.join(model_dir_path, f'config.json')
-
-            if model_path is not None and os.path.exists(config_path):
-                model_dirs.append({'name': name, 'path': os.path.join(runs_dir, name)})
+            model_dirs.append({'name': name, 'path': os.path.join(runs_dir, name)})
 
     return jsonify({'models': model_dirs})
 
