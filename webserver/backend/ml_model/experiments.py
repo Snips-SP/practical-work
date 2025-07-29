@@ -742,9 +742,10 @@ def testing_generation_function(simple: bool = True, gpt_version: str = None):
 
     generate_from_chords(chord_progression, chord_timings, 100, model_file, midi_file)
 
-    mid_to_mp3(midi_file, os.path.join(script_dir, 'tmp', 'SoundFont.sf2'), os.path.join(script_dir, 'tmp', f'{file_name}.mp3'))
+    mid_to_mp3(midi_file, os.path.join(script_dir, 'tmp', 'SoundFont.sf2'),
+               os.path.join(script_dir, 'tmp', f'{file_name}.mp3'))
     print('convert fin')
 
 
 if __name__ == '__main__':
-   testing_generation_function(False, 'GPT2_Small_3')
+    testing_generation_function(False, 'GPT2_Small_3')
