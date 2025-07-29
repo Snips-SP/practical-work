@@ -1,16 +1,15 @@
 /.idea
-/lakh-pianoroll-dataset-main/
-/CP_Drums_Generation/
-/chord2melody-main/
-/choco-main/
-/webserver/backend/ml_model/tmp/
-/output.mid
-/gpt_model_state_dict.ph
+/__pychache__
+/ExampleSongs
+/webserver/backend/tmp/
+/webserver/backend/__pychache__
 /webserver/backend/SoundFont.sf2
-/webserver/backend/gpt_model_state_dict.ph
+
+/webserver/backend/ml_model/tmp/
 /webserver/backend/ml_model/ldp_5_dataset/
 /webserver/backend/ml_model/lpd_5/
-/webserver/static/music/
-/ExampleSongs/
 /webserver/backend/ml_model/ldp_5_dataset_fully_modulated/
+
+/webserver/static/music/
+
 

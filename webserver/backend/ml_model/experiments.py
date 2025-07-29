@@ -747,4 +747,4 @@ def testing_generation_function(simple: bool = True, gpt_version: str = None):
 
 
 if __name__ == '__main__':
-    testing_generation_function(False, 'GPT2_Small_3')
+   testing_generation_function(False, 'GPT2_Small_3')

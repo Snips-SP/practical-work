@@ -276,15 +276,14 @@ def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: st
             if 'optimizer_state_dict' in checkpoint:
                 try:
                     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
-                    # Move optimizer state to the correct device
-                    for state in optimizer.state.values():
-                        for k, v in state.items():
-                            if isinstance(v, torch.Tensor):
-                                state[k] = v.to(device)
-
                 except Exception as e:
                     raise ValueError(f'Failed to load optimizer state dict optimizer: {e}')
+
+        # Move optimizer state to the correct device
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
 
         # Extract training progress info
         start_epoch = checkpoint.get('epoch', 0) + 1
