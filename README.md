@@ -81,6 +81,13 @@ With the train module new versions from the GPT2 model can be trained with varyi
 
 - Model architecture can be changed in the `NetworkConfig` class in `train.py`.
 
+### 4. Training progress
+
+View the training progress either live or analyze it afterward using tensorboard on the runs directory.
+```bash
+tensorboard --logdir runs
+```
+
 ---
 
 ## Running the Webserver
