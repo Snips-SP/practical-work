@@ -34,6 +34,39 @@ def train(num_epochs: int,
           continue_from: str = None,
           model_name: str = 'GPT2_Model',
           config=None):
+    """Trains a GPT-2 language model on the Lakh Pianoroll Dataset.
+
+        This function performs end-to-end training of a GPT-2 model for music generation.
+        It supports training from scratch or resuming from a checkpoint, with configurable
+        hyperparameters and optimization settings. The function handles dataset loading,
+        model initialization, gradient optimization with clipping, learning rate scheduling,
+        and comprehensive logging of training metrics including loss, perplexity, and
+        gradient norms.
+
+        :param int num_epochs: Number of training epochs to run.
+        :param int batch_size: Batch size for training, defaults to 16.
+        :param float learning_rate: Learning rate for the AdamW optimizer, defaults to 1e-4.
+        :param str lr_scheduler: Learning rate scheduler type, defaults to 'cosine'.
+                               Currently only 'cosine' is supported.
+        :param bool gradient_checkpointing: Enable gradient checkpointing to reduce memory usage
+                                          at the cost of computational overhead, defaults to False.
+        :param bool RAM_dataset: Load the entire dataset into RAM for faster access,
+                               defaults to False.
+        :param str device: Device to use for training ('cpu', 'cuda', 'xpu'). If None,
+                          automatically selects the best available device, defaults to None.
+        :param str continue_from: Path to a checkpoint directory to resume training from.
+                                If None, starts training from scratch, defaults to None.
+        :param str model_name: Name used for creating the logging directory,
+                             defaults to 'GPT2_Model'.
+        :param config: Custom model configuration object. If None, uses the default
+                      NetworkConfig.config, defaults to None.
+        :raises NotImplementedError: If an unsupported learning rate scheduler is specified.
+        :raises Exception: If NaN values are detected in logits, loss, or if exploding
+                          gradients are detected (gradient norm > 1e6).
+        :returns: None. The function saves checkpoints and logs training progress to disk.
+        :rtype: None
+    """
+
     # We assume the root path is the current script path
     root_path = os.path.dirname(os.path.abspath(__file__))
 

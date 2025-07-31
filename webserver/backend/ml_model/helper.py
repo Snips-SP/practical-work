@@ -6,8 +6,6 @@ import torch
 import subprocess
 import re
 import os
-import glob
-import shutil
 
 
 class EncodingConfig:
@@ -64,19 +62,19 @@ EncodingConfig.initialize()
 def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
     """Converts a MIDI file to an MP3 file using a SoundFont.
 
-    This function synthesizes the MIDI file into a temporary WAV file
-    using FluidSynth and the provided SF2 SoundFont. It then converts the
-    WAV file to MP3, automatically trimming any leading or trailing silence
-    that FluidSynth might have added.
+        This function synthesizes the MIDI file into a temporary WAV file
+        using FluidSynth and the provided SF2 SoundFont. It then converts the
+        WAV file to MP3, automatically trimming any leading or trailing silence
+        that FluidSynth might have added.
 
-    :param str mid_file: The path to the input MIDI file.
-    :param str sf2_file: The path to the SoundFont (.sf2) file.
-    :param str output_file: The path to save the resulting MP3 file,
-                        defaults to 'output.mp3'.
-    :raises AssertionError: If the `mid_file` or `sf2_file` is not found.
-    :raises FileNotFoundError: If ffmpeg is not found in the system path.
-    :returns: None. The function saves the output directly to a file.
-    :rtype: None
+        :param str mid_file: The path to the input MIDI file.
+        :param str sf2_file: The path to the SoundFont (.sf2) file.
+        :param str output_file: The path to save the resulting MP3 file,
+                            defaults to 'output.mp3'.
+        :raises AssertionError: If the `mid_file` or `sf2_file` is not found.
+        :raises FileNotFoundError: If ffmpeg is not found in the system path.
+        :returns: None. The function saves the output directly to a file.
+        :rtype: None
     """
     assert os.path.isfile(mid_file), 'Mid file not found'
     assert os.path.isfile(sf2_file), 'sf2 file not found'
@@ -122,11 +120,11 @@ def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
 def chord2tokens(chord: str) -> list:
     """Encodes a chord into a list of tokens.
 
-    :param str chord: The chord to encode, (e.g., 'C', 'Am', 'G7').
-    :return: A list of integer tokens representing the chord. The first token
-             is the root note for the bass, and subsequent tokens are for
-             the piano.
-    :rtype: list
+        :param str chord: The chord to encode, (e.g., 'C', 'Am', 'G7').
+        :return: A list of integer tokens representing the chord. The first token
+                 is the root note for the bass, and subsequent tokens are for
+                 the piano.
+        :rtype: list
     """
     notes = ['E', 'F', 'G', 'A', 'B', 'C', 'D']
     if chord[0] in notes:
@@ -183,21 +181,21 @@ def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: st
                            **optimizer_kwargs):
     """Load the latest checkpoint from a directory based on epoch number.
 
-    This function searches for checkpoint files matching the pattern '{name}{epoch}.ph'
-    and loads the one with the highest epoch number. It reconstructs the GPT2 model
-    from the saved config, creates an optimizer with the specified class and parameters,
-    and loads all saved states.
+        This function searches for checkpoint files matching the pattern '{name}{epoch}.ph'
+        and loads the one with the highest epoch number. It reconstructs the GPT2 model
+        from the saved config, creates an optimizer with the specified class and parameters,
+        and loads all saved states.
 
-    :param str directory: Directory path containing checkpoint files.
-    :param str name: Base name of checkpoint files (e.g., 'checkpoint_epoch_' for 'checkpoint_epoch_5.ph').
-    :param str device: The device to load the model and optimizer to ('cpu', 'cuda' or 'cpu').
-    :param optimizer_class: Optimizer class to instantiate (e.g., torch.optim.AdamW, torch.optim.Adam). If None, no optimizer is created.
-    :type optimizer_class: torch.optim.Optimizer or None
-    :param optimizer_kwargs: Keyword arguments passed to the optimizer constructor (e.g., lr=0.001, weight_decay=0.01, betas=(0.9, 0.999)).
-    :returns: A tuple containing (model, optimizer, start_epoch, global_step) if checkpoint found, where model is GPT2LMHeadModel with loaded weights, optimizer is the optimizer instance with loaded state (or None if optimizer_class is None), start_epoch is the next epoch number to start training from, and global_step is the global step counter for continuous logging. Returns None if no valid checkpoint is found.
-    :rtype: tuple or None
-    :raises FileNotFoundError: If checkpoint exists but doesn't contain valid config.
-    :raises ValueError: If checkpoint file is corrupted or missing required keys.
+        :param str directory: Directory path containing checkpoint files.
+        :param str name: Base name of checkpoint files (e.g., 'checkpoint_epoch_' for 'checkpoint_epoch_5.ph').
+        :param str device: The device to load the model and optimizer to ('cpu', 'cuda' or 'cpu').
+        :param optimizer_class: Optimizer class to instantiate (e.g., torch.optim.AdamW, torch.optim.Adam). If None, no optimizer is created.
+        :type optimizer_class: torch.optim.Optimizer or None
+        :param optimizer_kwargs: Keyword arguments passed to the optimizer constructor (e.g., lr=0.001, weight_decay=0.01, betas=(0.9, 0.999)).
+        :returns: A tuple containing (model, optimizer, start_epoch, global_step) if checkpoint found, where model is GPT2LMHeadModel with loaded weights, optimizer is the optimizer instance with loaded state (or None if optimizer_class is None), start_epoch is the next epoch number to start training from, and global_step is the global step counter for continuous logging. Returns None if no valid checkpoint is found.
+        :rtype: tuple or None
+        :raises FileNotFoundError: If checkpoint exists but doesn't contain valid config.
+        :raises ValueError: If checkpoint file is corrupted or missing required keys.
     """
 
     # Validate inputs
@@ -299,6 +297,16 @@ def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: st
 
 
 def get_device(preferred: str = None) -> str:
+    """Determines the best available PyTorch device for computation.
+
+        Selects an appropriate device for PyTorch operations, prioritizing the user's
+        preference if available, otherwise falling back to automatic detection in
+        order of preference: XPU (Intel GPU) > CUDA (NVIDIA GPU) > CPU.
+
+        :param str preferred: Preferred device type ('xpu', 'cuda', or 'cpu'), defaults to None.
+        :returns: The selected device identifier string.
+        :rtype: str
+    """
     # Normalize and check if a preferred device was given
     preferred = preferred.lower() if preferred else None
 
@@ -319,8 +327,18 @@ def get_device(preferred: str = None) -> str:
         return 'cpu'
 
 
-# Function to get the next available index for a new run folder
 def get_next_run_folder(name, base_dir='runs'):
+    """Generates the next available run folder path with sequential numbering.
+
+        Scans the base directory for existing folders matching the pattern '{name}_{index}'
+        and returns a path for the next sequential run folder. Useful for organizing
+        experiment outputs without overwriting previous runs.
+
+        :param str name: Base name for the run folder (e.g., 'experiment', 'training').
+        :param str base_dir: Directory to search for existing runs, defaults to 'runs'.
+        :returns: Path to the next available run folder (e.g., 'runs/experiment_3').
+        :rtype: str
+    """
     # List all folders in the base directory
     existing_folders = os.listdir(base_dir)
 

@@ -6,6 +6,35 @@ from torch.utils.data import Dataset
 
 
 class GPT2Dataset(Dataset):
+    """A PyTorch Dataset for loading chunked GPT-2 training data with efficient memory management.
+
+        This dataset class is designed to handle large-scale tokenized music data that has been
+        pre-processed and split into multiple compressed chunk files. It implements an efficient
+        loading strategy that keeps only one chunk in memory at a time while preloading the next
+        chunk in a background thread to minimize I/O bottlenecks during training. The dataset
+        automatically cycles through all chunks and handles the mapping from global indices to
+        chunk-specific indices.
+
+        The dataset expects the data directory to contain numbered .npz files (e.g., 000.npz,
+        001.npz, etc.) where each file contains a compressed NumPy array of tokenized sequences.
+
+        :param str dataset_path: Path to the directory containing the chunked .npz files.
+        :raises NotADirectoryError: If the specified dataset_path is not a valid directory.
+        :raises IndexError: If an invalid index is accessed via __getitem__.
+
+        Attributes:
+            dataset_path (str): Path to the dataset directory.
+            chunk_files (dict): Mapping from file numbers to file paths.
+            file_lengths (dict): Mapping from file numbers to the number of sequences in each file.
+            length (int): Total number of sequences across all chunks.
+            current_file_index (int): Index of the currently loaded chunk file.
+            current_data (np.ndarray): Currently loaded chunk data.
+            next_data (np.ndarray): Next chunk data being preloaded.
+            lock (threading.Lock): Thread lock for synchronizing data access.
+            preload_event (threading.Event): Event for coordinating preloading operations.
+            restart (bool): Flag indicating whether to restart from the first chunk.
+    """
+
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path
         self.chunk_files = {}
@@ -110,6 +139,26 @@ class GPT2Dataset(Dataset):
 
 
 class GPT2RAMDataset(Dataset):
+    """A PyTorch Dataset that loads all chunked GPT-2 training data into RAM for fast access.
+
+        This dataset class loads the entire tokenized music dataset into system memory during
+        initialization, providing maximum training speed at the cost of high memory usage.
+        It is suitable for smaller datasets or systems with abundant RAM where I/O latency
+        needs to be completely eliminated during training. All compressed chunk files are
+        loaded and concatenated into a single NumPy array for direct indexing.
+
+        The dataset expects the data directory to contain .npz files where each file contains
+        a compressed NumPy array of tokenized sequences. All chunks are loaded sequentially
+        and concatenated along the first axis.
+
+        :param str dataset_path: Path to the directory containing the chunked .npz files.
+        :raises NotADirectoryError: If the specified dataset_path is not a valid directory.
+
+        Attributes:
+            dataset_path (str): Path to the dataset directory.
+            data (np.ndarray): Concatenated array containing all tokenized sequences.
+    """
+
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path
         self.data = []

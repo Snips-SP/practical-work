@@ -19,6 +19,34 @@ class Runner:
         self.trc_avg = trc_avg
 
     def _run(self, file_path):
+        """Processes a single MIDI file and converts it to tokenized sequences with data augmentation.
+
+            This method takes a MIDI pianoroll file and transforms it into tokenized sequences suitable
+            for training generative models. The process includes track reordering (bass first), pitch
+            modulation for data augmentation, temporal quantization to sixteenth notes, and encoding
+            of notes into a compact token representation. Multiple augmented versions of the same piece
+            are generated through pitch transposition.
+
+            The encoding process:
+            1. Loads the MIDI file and transposes tracks to prioritize bass
+            2. Calculates per-track pitch averages for intelligent modulation
+            3. Generates multiple transposed versions (0 to self.number_of_modulations semitones)
+            4. Quantizes timing to sixteenth note grid
+            5. Encodes each note as a single token combining track and pitch information
+            6. Adds timing and end-of-sequence markers
+
+            :param str file_path: Path to the input MIDI pianoroll (.npz) file to process.
+            :returns: None. The method saves the tokenized sequences to a temporary pickle file
+                     with '.tmp' extension added to the original file path.
+            :rtype: None
+
+            Note:
+                The method applies intelligent pitch shifting that considers the global dataset
+                pitch averages per track to avoid shifting notes too far out of their natural
+                range. Drum tracks (track index 1) are not pitch-shifted during augmentation.
+                All generated token sequences are saved to '{file_path}.tmp' for later chunking.
+        """
+
         seq = []
         # Load it as a multitrack object
         m = pypianoroll.load(file_path)
@@ -173,6 +201,36 @@ def encode_dataset(output,
                    sequence_length: int = 1024,
                    chunk_size: int = 400_000,
                    encode_from_tmp: bool = False):
+    """Encodes the Lakh Pianoroll Dataset into tokenized sequences for machine learning training.
+
+        This function processes MIDI pianoroll data from the LPD-5 dataset, converting it into
+        tokenized sequences suitable for training generative models. The function performs three
+        main stages: (1) calculates average pitch values per track across the dataset for
+        normalization, (2) encodes MIDI files into token sequences using multiprocessing, and
+        (3) chunks the tokenized data into compressed NumPy archives for efficient loading during
+        training. The process includes data augmentation through pitch modulation and track
+        reordering to prioritize bass instruments.
+
+        :param str output: Output directory path where the encoded dataset chunks will be saved.
+        :param str dataset: Dataset identifier, currently only 'lpd_5' is supported,
+                           defaults to 'lpd_5'.
+        :param int process: Number of parallel processes to use for encoding,
+                           defaults to 4.
+        :param int da: Data augmentation parameter for pitch modulation (0-11 semitones),
+                      defaults to 5.
+        :param int sequence_length: Length of individual token sequences to generate,
+                                   defaults to 1024.
+        :param int chunk_size: Number of sequences to include in each output chunk file,
+                              defaults to 400,000.
+        :param bool encode_from_tmp: If True, skips encoding and creates chunks from existing
+                                    temporary files. If False, performs full encoding pipeline,
+                                    defaults to False.
+        :raises SystemExit: If the specified dataset is not found or is invalid.
+        :raises AssertionError: If dataset is not 'lpd_5' (when called from command line).
+        :returns: None. The function saves encoded chunks as compressed .npz files and
+                 track ordering information to the output directory.
+        :rtype: None
+    """
     if dataset == 'lpd_5':
         tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
         if os.path.isdir('lpd_5/lpd_5_full'):
