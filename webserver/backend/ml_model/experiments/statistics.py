@@ -490,39 +490,66 @@ def analyze_genre_distributions(cleansed_ids_file, label_provider_folders):
 #    analyze_genre_distributions(cleansed_ids_file, label_provider_folders)
 
 
-def get_unique_drum_pitches():
+def get_drum_pitch_counts():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
 
     file_paths = glob.glob('../lpd_5/lpd_5_cleansed/*/*/*/*/*.npz')
-    drum_pitches = set()
+    drum_pitch_counts = Counter()
 
     for file_path in tqdm(file_paths):
         try:
-            # Load multitrack object
             m = pypianoroll.load(file_path)
 
-            # Find the drum track
             drum_tracks = [t for t in m.tracks if t.is_drum]
             if not drum_tracks:
-                continue  # Skip if no drum track
+                continue
 
             for drum_track in drum_tracks:
-                # drum_track.pianoroll shape: (timesteps, pitches)
                 pr = drum_track.pianoroll
+                pitch_occurrences = np.sum(pr > 0, axis=0)
 
-                # Find all pitch indices where any timestep has a note
-                used_pitches = np.where(pr.sum(axis=0) > 0)[0]
-                drum_pitches.update(used_pitches)
+                for pitch, count in enumerate(pitch_occurrences):
+                    if count > 0:
+                        drum_pitch_counts[pitch] += count
 
         except Exception as e:
             print(f'Error processing {file_path}: {e}')
 
-    print('Unique drum pitches:', sorted(drum_pitches))
-    print('Number of unique drum pitches:', len(drum_pitches))
+    # Save the raw counts to pickle
+    with open('drum_pitch_counts.pkl', 'wb') as f:
+        pickle.dump(drum_pitch_counts, f)
+
+    # Calculate coverage-based selection
+    total_notes = sum(drum_pitch_counts.values())
+    sorted_pitches = sorted(drum_pitch_counts.items(), key=lambda x: x[1], reverse=True)
+
+    coverage_limit = 0.9 * total_notes
+    selected_pitches = []
+    running_total = 0
+
+    for pitch, count in sorted_pitches:
+        selected_pitches.append(pitch)
+        running_total += count
+        if running_total >= coverage_limit:
+            break
+
+    # Save coverage-based selection to pickle
+    with open('../tmp/drum_pitch_coverage_90.pkl', 'wb') as f:
+        pickle.dump(selected_pitches, f)
+
+    # Output
+    print('\nSorted pitch counts:')
+    for pitch, count in sorted_pitches:
+        print(f'Pitch {pitch}: {count} occurrences')
+
+    print(f'\nNumber of unique drum pitches: {len(drum_pitch_counts)}')
+    print(f'Selected pitches for 90% coverage: {selected_pitches}')
+
+    return drum_pitch_counts, selected_pitches
 
 
 if __name__ == '__main__':
-    get_unique_drum_pitches()
+    get_drum_pitch_counts()
 
     ### TODO: Design a better encoding for the drums. Figure out why so many pitches are used and if we can save some dictionary space if some of them overlap

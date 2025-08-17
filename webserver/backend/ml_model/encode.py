@@ -98,9 +98,7 @@ class Runner:
                 # only look at indices 0, 6, 12, 18, 24
                 if p[0][i] % step != 0:
                     continue
-                # Only if we have advanced in the position will the current cur_seq be written down
-                # More note encodings can be placed on the same sixteenth note since they can be
-                # from different instruments or an instrument can play more notes at once
+
                 if pos < p[0][i]:
                     # From last position to next note occurrence write down the notes which are played
                     # by the instruments
