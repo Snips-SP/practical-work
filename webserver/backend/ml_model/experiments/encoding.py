@@ -246,6 +246,9 @@ def new_encode(file_path, encoding_resolution, number_of_modulations=0):
     # Create list with [0, random permutation of the numbers 1 - 12]
     modulation = [0] + (np.random.permutation(11) + 1).tolist()
 
+    ### TODO: Look at the forth 35 event. It is off by a beat
+    count_35 = 0
+
     current_seq = []
     # Do data augmentation according to specified parameter 'da' in range [0-11]
     # All sequences are appended to the same list
@@ -256,6 +259,13 @@ def new_encode(file_path, encoding_resolution, number_of_modulations=0):
             tick = p[0][i]
             pitch = p[1][i]
             track = p[2][i]
+
+            if pitch == 35 and track == 4:
+                count_35 += 1
+                if count_35 == 4:
+                    print('found it')
+                    ### TODO: Fix wrong encoding of this test trac at beat 5 note 35 in drum track
+                    # Encoding seems to work maybe decoding has a problem
 
             # -------------------
             # Handle drum events
@@ -297,7 +307,6 @@ def new_encode(file_path, encoding_resolution, number_of_modulations=0):
                         seq.extend(_new_reorder_current(current_seq))
                         seq.append(NewEncodingConfig.time_note)
                         current_seq = []
-                        ### TODO: Should we clear the current seq after the loop of in the end of the loop???
                 pos = tick
 
                 if cur_avg[track] + s < trc_avg[track] + 6:
@@ -343,12 +352,11 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
     # Create empty pianoroll array with resolution 24
     pianoroll = np.zeros((len(NewEncodingConfig.encoding_order), length * 24, 128))
 
+
+
     pos = 0
     # Decode it again
     for i in range(len(file_chunk)):
-        if i == 513:
-            print('here')
-
         note = file_chunk[i]
         if note == NewEncodingConfig.time_note:
             # Either way update the position by 6 (step)
@@ -382,9 +390,6 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
                         offset = NewEncodingConfig.microtiming_token_to_delta[microtiming]
                         # Add offset to the position
                         pianoroll_pos = pos + offset
-                        # Skip the next token for encoding since we know its a microtiming token
-                        i += 1
-                        ### TODO: The skipping does not seem to work. We are reaching the "We should not be here"
                     else:
                         # It is not a microtiming but some other note, which means we do not have an offset
                         pianoroll_pos = pos
@@ -393,7 +398,8 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
                     pianoroll_pos = pos
             elif note < NewEncodingConfig.instrument_bases['Special']:
                 # It is a Microtimings token. We should always skip them since they always come paired with drum tokens.
-                raise ValueError('We should not be here')
+                # Skip the next token for encoding since we know its a microtiming token
+                continue
             else:
                 # It is either padding or and end note
                 continue
