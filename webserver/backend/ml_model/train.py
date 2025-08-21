@@ -33,6 +33,7 @@ def train(num_epochs: int,
           device: str = None,
           continue_from: str = None,
           model_name: str = 'GPT2_Model',
+          modulation: int = 0,
           config=None):
     """Trains a GPT-2 language model on the Lakh Pianoroll Dataset.
 
@@ -58,6 +59,8 @@ def train(num_epochs: int,
                                 If None, starts training from scratch, defaults to None.
         :param str model_name: Name used for creating the logging directory,
                              defaults to 'GPT2_Model'.
+        :param int modulation: Number of modulations for each midi file. Has to be created first with encode.py,
+                            defaults to 0.
         :param config: Custom model configuration object. If None, uses the default
                       NetworkConfig.config, defaults to None.
         :raises NotImplementedError: If an unsupported learning rate scheduler is specified.
@@ -66,7 +69,6 @@ def train(num_epochs: int,
         :returns: None. The function saves checkpoints and logs training progress to disk.
         :rtype: None
     """
-
     # We assume the root path is the current script path
     root_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -127,9 +129,9 @@ def train(num_epochs: int,
 
     # Get dataset and dataloader
     if RAM_dataset:
-        dataset = GPT2RAMDataset(os.path.join(root_path, 'ldp_5_dataset'))
+        dataset = GPT2RAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}'))
     else:
-        dataset = GPT2Dataset(os.path.join(root_path, 'ldp_5_dataset'))
+        dataset = GPT2Dataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}'))
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -144,7 +146,7 @@ def train(num_epochs: int,
     # Define progress bar
     num_training_steps = num_epochs * len(dataloader)
 
-    # Set model to train and move it to device
+    # Set the model to train and move it to the right device
     model.train()
     model.to(device)
 
@@ -200,7 +202,7 @@ def train(num_epochs: int,
             # Zero gradients before the backward pass (best practice for pytorch)
             optimizer.zero_grad()
 
-            # If we only give the inputs and not the labels the hugging face model will not calculate
+            # If we only give the inputs and not the labels, the hugging face model will not calculate
             # the loss on its own, so we can use our own loss function
             outputs = model(input_ids=input_ids)
 
@@ -260,7 +262,7 @@ def train(num_epochs: int,
             if lr_scheduler is not None:
                 display_stats['LR'] = f'{lr_scheduler.get_last_lr()[0]:.6f}'
 
-            # Display stats in progress bar
+            # Display stats in the progress bar
             progress_bar.set_postfix(display_stats)
             progress_bar.update(1)
 
@@ -283,6 +285,64 @@ def train(num_epochs: int,
     writer.close()
 
 
+def run_trainings_from_code():
+    config1 = GPT2Config(
+        vocab_size=EncodingConfig.vocab_size,  # 423
+        n_positions=1024,  # Maximum sequence length
+        n_ctx=256,  # Context window size
+        n_embd=256,  # Embedding size
+        n_layer=2,  # Number of transformer layers
+        n_head=2,  # Number of attention heads
+        pad_token_id=EncodingConfig.padding_token,  # 422
+    )
+
+    config2 = GPT2Config(
+        vocab_size=EncodingConfig.vocab_size,  # 423
+        n_positions=1024,  # Maximum sequence length
+        n_ctx=256,  # Context window size
+        n_embd=256,  # Embedding size
+        n_layer=4,  # Number of transformer layers
+        n_head=4,  # Number of attention heads
+        pad_token_id=EncodingConfig.padding_token,  # 422
+    )
+
+    config3 = GPT2Config(
+        vocab_size=EncodingConfig.vocab_size,  # 423
+        n_positions=1024,  # Maximum sequence length
+        n_ctx=256,  # Context window size
+        n_embd=384,  # Embedding size
+        n_layer=6,  # Number of transformer layers
+        n_head=6,  # Number of attention heads
+        pad_token_id=EncodingConfig.padding_token,  # 422
+    )
+    num_epochs = 2
+    batch_size = 16
+    learning_rate = 1e-4
+    lr_scheduler = 'cosine'
+    gradient_checkpointing = False
+    RAM_dataset = True
+    device = 'xpu'
+    modulation = 0
+
+    # Train with same parameters but different configs
+    for name, config in [('GPT2_Medium', config3), ('GPT2_Small', config2), ('GPT2_Tiny', config1)]:
+        if name == 'GPT2_Medium':
+            batch_size = 8
+        else:
+            batch_size = 16
+        train(num_epochs=num_epochs,
+              batch_size=batch_size,
+              learning_rate=learning_rate,
+              lr_scheduler=lr_scheduler,
+              gradient_checkpointing=gradient_checkpointing,
+              RAM_dataset=RAM_dataset,
+              device=device,
+              continue_from=None,
+              model_name=name,
+              modulation=modulation,
+              config=config)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--num_epochs', type=int, required=True, help='Number of training epochs')
@@ -291,19 +351,26 @@ if __name__ == '__main__':
     parser.add_argument('--lr_scheduler', type=str, default='cosine', choices=['cosine'], help='Learning rate scheduler type')
     parser.add_argument('--gradient_checkpointing', action='store_true', help='Enable gradient checkpointing to save memory')
     parser.add_argument('--RAM_dataset', action='store_true', help='Load entire dataset into memory')
+    parser.add_argument('--modulation', type=int, default=0, help='Number of modulations for each midi file')
     parser.add_argument('--device', type=str, default=None, help='Device to use: cpu, cuda, or xpu (auto-select if None)')
     parser.add_argument('--continue_from', type=str, default=None, help='Path to a directory to continue training from a checkpoint')
+    parser.add_argument('--run_trainings_from_code', type=bool, default=False,
+                        help='Ignores command line interface arguments and runs the training function.')
 
     args = parser.parse_args()
 
-    train(num_epochs=args.num_epochs,
-          batch_size=args.batch_size,
-          learning_rate=args.learning_rate,
-          lr_scheduler=args.lr_scheduler,
-          gradient_checkpointing=args.gradient_checkpointing,
-          RAM_dataset=args.RAM_dataset,
-          continue_from=args.continue_from,
-          device=args.device)
+    if args.run_trainings_from_code:
+        run_trainings_from_code()
+    else:
+        train(num_epochs=args.num_epochs,
+              batch_size=args.batch_size,
+              learning_rate=args.learning_rate,
+              lr_scheduler=args.lr_scheduler,
+              gradient_checkpointing=args.gradient_checkpointing,
+              RAM_dataset=args.RAM_dataset,
+              continue_from=args.continue_from,
+              modulation=args.modulation,
+              device=args.device)
 
 
 

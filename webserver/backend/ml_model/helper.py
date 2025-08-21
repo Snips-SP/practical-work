@@ -3,57 +3,121 @@ from pydub.silence import split_on_silence
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
+from typing import Dict, List
 import subprocess
 import re
 import os
 
 
 class EncodingConfig:
-    # List of all used tokens (excluding padding token)
-    tokens: list = []
-    # Token used for padding
+    """
+    EncodingConfig holds the token layout and helper mappings for notes, drums and microtiming tokens.
+    Call EncodingConfig.initialize() once at startup to populate maps.
+    """
+
+    # Public config
+    tokens: List[int] = []
     padding_token: int = None
-    # The length of all tokens (tokens and padding)
     vocab_size: int = None
 
-    # All the instruments which are used in our encoding
-    tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
+    # Instrument configuration
+    # The order of tracks in which they appear in the dataset
+    midi_tracks: List[str] = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
+    # The order we wish to encode the notes in (As string and as indices of midi_tracks)
+    encoding_order: List[str] = ['Bass', 'Piano', 'Guitar', 'Strings', 'Drums']
+    # [3, 1, 2, 4, 0]
+    trc_idx: List[int] = None
+
     programs = {
-        'Drums': 0,  # Program is not important here since we set the flag is_drum when creating a track
-        'Piano': 0,  # Program for Acoustic Grand Piano
-        'Guitar': 32,  # Program for 32 for Electric Guitar
-        'Bass': 35,  # Program for Electric Bass (picked)
-        'Strings': 49  # Program for String Ensemble 1
+        'Drums': 0,
+        'Piano': 0,
+        'Guitar': 32,
+        'Bass': 35,
+        'Strings': 49
     }
 
-    # The offsets between the instruments and range of notes
-    note_size: int = 84
-    note_offset: int = 24
+    # General pitch packing / offset settings
+    note_size: int = 84  # how many pitch slots per melodic instrument
+    note_offset: int = 24  # midi pitch corresponding to index 0 inside each melodic instrument block
 
-    # Tokens for time note and end note
+    # Special tokens (filled during initialize)
     time_note: int = None
     end_note: int = None
 
-    # List with prioritised index where Bass is placed in front
-    trc_idx: list = None
+    # Drum pitches used in your dataset (sorted)
+    drum_pitches: List[int] = [27, 28, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50,
+                               51, 53, 54, 55, 56, 57, 59, 60, 61, 62, 63, 64, 65, 67, 68, 69, 70, 73, 75,
+                               76, 77, 80, 81, 82, 83, 85, 87]
+
+    # Microtiming definitions: (delta in steps)
+    microtimings: List[int] = [-2, -1, 1, 2, 3]
+
+    # Mappings filled at initialize
+    instrument_bases: Dict[str, int] = {}
+    drum_pitch_to_token: Dict[int, int] = {}
+    drum_token_to_pitch: Dict[int, int] = {}
+    microtiming_delta_to_token: Dict[int, int] = {}
+    microtiming_token_to_delta: Dict[int, int] = {}
 
     @classmethod
     def initialize(cls):
-        if not cls.tokens:  # Prevent re-initialization
-            # Bass: [0 * 84, 0 * 84 + 83] = [0, 83]
-            # Drums: [1 * 84, 1 * 84 + 83] = [84, 167]
-            # Piano: [2 * 84, 2 * 84 + 83] = [168, 251]
-            # Guitar: [3 * 84, 3 * 84 + 83] = [252, 335]
-            # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
-            cls.tokens.extend(range(0, 420))
-            cls.time_note = cls.tokens[-1] + 1
-            cls.tokens.append(cls.time_note)  # Add the token which represents a pause in the music (420)
-            cls.end_note = cls.tokens[-1] + 1
-            cls.tokens.append(cls.end_note)  # Add the token which represents the end of the sequence (421)
-            cls.padding_token = cls.tokens[-1] + 1  # Add the padding token to the mix (422)
-            cls.vocab_size = cls.padding_token + 1  # We need to add one to the total size since 0 is included
+        if cls.tokens:
+            return  # already initialized
 
-            cls.trc_idx = sorted(list(range(len(cls.tracks))), key=lambda x: 0 if cls.tracks[x] == 'Bass' else 1)
+        cls.tokens = []
+        cls.trc_idx = [cls.midi_tracks.index(track) for track in cls.encoding_order]
+        current = 0
+
+        # Add melodic instrument blocks in the chosen order: Bass, Piano, Guitar, Strings
+        melodic_tracks = [t for t in cls.encoding_order if t != 'Drums']
+        for t in melodic_tracks:
+            cls.instrument_bases[t] = current
+            # just reserve the integer range; tokens will be 0..(vocab-1) anyway
+            current += cls.note_size
+
+        # Drums: custom per-pitch mapping (one token per pitch from drum_pitches_sorted)
+        cls.instrument_bases['Drums'] = current
+        start_drum = current
+        for i, midi_pitch in enumerate(cls.drum_pitches):
+            token_id = start_drum + i
+            cls.drum_pitch_to_token[midi_pitch] = token_id
+            cls.drum_token_to_pitch[token_id] = midi_pitch
+        current = start_drum + len(cls.drum_pitches)
+
+        # Microtiming tokens
+        cls.instrument_bases['Microtimings'] = current
+        for delta in cls.microtimings:
+            token_id = current
+            cls.microtiming_delta_to_token[delta] = token_id
+            cls.microtiming_token_to_delta[token_id] = delta
+            current += 1
+
+        cls.instrument_bases['Special'] = current
+        # Special tokens: time_note, end_note, padding
+        cls.time_note = current
+        current += 1
+        cls.end_note = current
+        current += 1
+        cls.padding_token = current
+        current += 1
+
+        # Final vocabulary size and token list
+        cls.vocab_size = current
+        cls.tokens = list(range(cls.vocab_size))
+
+    @staticmethod
+    def reorder_current(cur_seq):
+        """
+        Reorder the sequence in one timestep so that melodic tokens always come first and are ordered accendingly.
+        Assumes instruments are encoded in blocks of size EncodingConfig.note_size.
+        """
+        # Stort melodic tokens in an accenting order
+        melodic_notes = [c for c in cur_seq if 0 <= c < EncodingConfig.instrument_bases['Drums']]
+        # Dont sort drum tokens, though, since microtiming tokens and special tokens depend on order
+        other_notes = [c for c in cur_seq if EncodingConfig.instrument_bases['Drums'] <= c < EncodingConfig.vocab_size]
+
+        # Sort each group to keep deterministic ordering
+        return sorted(melodic_notes) + other_notes
 
 
 EncodingConfig.initialize()

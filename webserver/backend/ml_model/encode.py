@@ -4,6 +4,8 @@ from tqdm import tqdm
 import numpy as np
 import pickle
 from multiprocessing import Pool
+import multiprocessing as mp
+from typing import List
 import glob
 import gc
 import os
@@ -12,11 +14,88 @@ import argparse
 EncodingConfig.initialize()
 
 
+def process_files_worker(files_to_process: List[str], results_queue: mp.Queue, sequence_length: int):
+    """
+    This is the producer function. It reads a subset of .tmp files,
+    creates sequences, and puts them on the queue for the writer process.
+    """
+    # Number of sequences to batch before sending to the writer.
+    # This reduces communication overhead.
+    WORKER_BATCH_SIZE = 1000
+
+    chunks = []
+    current_chunk = []
+
+    for file_path in files_to_process:
+        if not os.path.exists(file_path):
+            continue
+
+        try:
+            with open(file_path, mode='rb') as f:
+                file_tokens = pickle.load(f)
+        except (pickle.UnpicklingError, EOFError):
+            # Skip corrupted or empty temp files
+            continue
+
+        for note in file_tokens:
+            current_chunk.append(note)
+            if len(current_chunk) >= sequence_length:
+                chunks.append(np.array(current_chunk, dtype=np.uint16))
+                current_chunk = []
+
+                if len(chunks) >= WORKER_BATCH_SIZE:
+                    results_queue.put(chunks)
+                    chunks = []
+
+    if chunks:
+        results_queue.put(chunks)
+
+
+def save_chunks_writer(output_path: str, results_queue: mp.Queue, total_sequences_approx: int, chunk_size: int,
+                       sentinel: None):
+    """
+    This is the consumer function. It receives batches of sequences from workers,
+    accumulates them, and saves them to .npz files when a full chunk is ready.
+    """
+    all_chunks = []
+    num_files_saved = 0
+
+    pbar = tqdm(total=total_sequences_approx, desc='Chunking and saving files (3/3)')
+
+    while True:
+        worker_batch = results_queue.get()
+
+        if worker_batch is sentinel:
+            break
+
+        all_chunks.extend(worker_batch)
+        pbar.update(len(worker_batch))
+
+        while len(all_chunks) >= chunk_size:
+            data_to_save = np.array(all_chunks[:chunk_size])
+            np.savez_compressed(
+                os.path.join(output_path, f'{num_files_saved:03d}.npz'),
+                data=data_to_save
+            )
+            num_files_saved += 1
+            all_chunks = all_chunks[chunk_size:]
+
+    # Save the final, smaller chunk that remains
+    if all_chunks:
+        print(f"\nSaving final chunk with {len(all_chunks)} sequences...")
+        data_to_save = np.array(all_chunks)
+        np.savez_compressed(
+            os.path.join(output_path, f'{num_files_saved:03d}.npz'),
+            data=data_to_save
+        )
+    pbar.close()
+
+
 class Runner:
-    def __init__(self, trc_idx, number_of_modulations, trc_avg):
-        self.trc_idx = trc_idx
+    def __init__(self, number_of_modulations, trc_avg, overwrite=True):
         self.number_of_modulations = number_of_modulations
         self.trc_avg = trc_avg
+        self.overwrite = overwrite
 
     def _run(self, file_path):
         """Processes a single MIDI file and converts it to tokenized sequences with data augmentation.
@@ -44,10 +123,12 @@ class Runner:
                 The method applies intelligent pitch shifting that considers the global dataset
                 pitch averages per track to avoid shifting notes too far out of their natural
                 range. Drum tracks (track index 1) are not pitch-shifted during augmentation.
-                All generated token sequences are saved to '{file_path}.tmp' for later chunking.
+                All generated token sequences are saved to '{file_path}.{modulation}.tmp' for later chunking.
         """
+        # If already have all the modulated tmp files and dont want to overwrite them we are done
+        if len(list(glob.glob(os.path.join(os.path.dirname(file_path), '*.tmp')))) >= 12 and self.overwrite is False:
+            return
 
-        seq = []
         # Load it as a multitrack object
         m = pypianoroll.load(file_path)
         # Beat resolution is the number of steps a measure is divided into
@@ -58,7 +139,7 @@ class Runner:
         # Transpose the array to have shape (num_time_steps, num_pitches, num_tracks)
         pr = np.transpose(pr, (1, 2, 0))
         # Change ordering to get the bass first and have consistent indexing
-        pr = pr[:, :, self.trc_idx]
+        pr = pr[:, :, EncodingConfig.trc_idx]
         # This changes the indexing to:
         # 0 = Bass (Program: 32)
         # 1 = Drums (Program: Drums (0))
@@ -69,7 +150,7 @@ class Runner:
         # Again get all time steps of notes being played
         p = np.where(pr != 0)
         # Calculate the average pitch of this song per track
-        cur_avg_c = np.zeros((len(EncodingConfig.tracks), 2))
+        cur_avg_c = np.zeros((len(EncodingConfig.encoding_order), 2))
         for i in range(len(p[0])):
             # Track of the note at timestep i
             track = p[2][i]
@@ -83,106 +164,111 @@ class Runner:
         cur_avg_c[:, 1] = np.where(cur_avg_c[:, 1] == 0, 1, cur_avg_c[:, 1])
         # Perform the division safely
         cur_avg = np.where(cur_avg_c[:, 1] > 0, cur_avg_c[:, 0] / cur_avg_c[:, 1], 60)
-        # Create list with [0, random permutation of the numbers 1 - 12]
-        modulation = [0] + (np.random.permutation(11) + 1).tolist()
+        # Create a list with possible modulations
+        possible_shifts = list(range(-5, 0)) + list(range(1, 7))
+        modulation = [0] + possible_shifts[:self.number_of_modulations]
 
-        current_seq = []
-        # Do data augmentation according to specified parameter 'da' in range [0-11]
-        # All sequences are appended to the same list
-        ### TODO: Make downwards modulations possible i.e. +1 and -1
-        for s in modulation[:self.number_of_modulations + 1]:
-            pos = 0
-            # Create an encoding sequence for each modulation
-            for i in range(len(p[0])):
-                # Ignore smaller notes then sixteenth notes or notes that are not on the gird
-                # only look at indices 0, 6, 12, 18, 24
-                if p[0][i] % step != 0:
-                    continue
+        for s in modulation:
+            # Only create modulation if we really need it
+            if os.path.exists(file_path + f'.{s}.tmp') and self.overwrite is False:
+                continue
 
-                if pos < p[0][i]:
-                    # From last position to next note occurrence write down the notes which are played
-                    # by the instruments
-                    for _ in range(pos, p[0][i], step):
-                        seq.extend(self._reorder_current(current_seq))
-                        seq.append(EncodingConfig.time_note)
-                        current_seq = []
-                # Set current position to the last note occurrence
-                pos = p[0][i]
-                # Get current pitch
-                pitch = p[1][i]
-                # Get current track
-                track = p[2][i]
+            seq = []
+            # last, next buffer
+            seq_buffer = [
+                # Anchor tick, buffer
+                (0, []),
+                (step, [])
+            ]
 
-                shift = 0
-                # Do this for every track expect drums
-                if track != 1:
-                    # Decide if we apply a shift of one octave downwards when modulating if
-                    # The hypothetical pitch average of the current track after applying modulation s
-                    # <
-                    # A threshold based on the datasets global pitch average for this track plus a buffer of 6
-                    if cur_avg[track] + s < self.trc_avg[track] + 6:
-                        shift = s
+            for tick in range(pr.shape[0]):
+                # Update our valid positions
+                if tick % step == 0 and tick != 0:
+                    # We have advanced to the next valid sixteenth note,
+                    # thus we rotate out the last sequence and write it to seq
+                    _, last_seq = seq_buffer[0]
+                    last_seq.append(EncodingConfig.time_note)
+                    seq.extend(EncodingConfig.reorder_current(last_seq))
+                    # Remove the last sequence and add new next sequence
+                    seq_buffer.pop(0)
+                    seq_buffer.append((tick + step, []))
+
+                # active has shape (N, 2) with columns [pitch, track]
+                active = np.argwhere(pr[tick] != 0)
+                for pitch, track in active:
+
+                    # -------------------
+                    # Handle drum events
+                    # -------------------
+                    if track == EncodingConfig.encoding_order.index('Drums'):
+                        if pitch not in EncodingConfig.drum_pitches:
+                            continue
+
+                        # Determine to which sixteenth note this note snaps to (either next or last)
+                        offset = tick - seq_buffer[0][0]
+                        if offset <= 3:
+                            buffer = 0
+                        else:
+                            offset = tick - seq_buffer[1][0]
+                            buffer = 1
+
+                        # Map pitch
+                        drum_token = EncodingConfig.drum_pitch_to_token[pitch]
+
+                        # Add base drum token
+                        seq_buffer[buffer][1].append(drum_token)
+
+                        # Add timing offset if not 0
+                        if offset != 0:
+                            offset_token = EncodingConfig.microtiming_delta_to_token[offset]
+                            seq_buffer[buffer][1].append(offset_token)
+
+                    # ------------------------
+                    # Handle pitched instruments
+                    # ------------------------
                     else:
-                        shift = s - 12
+                        # Only accept notes on grid 0,6,12,18 and only write to the current sequence
+                        if tick % step != 0:
+                            continue
 
-                # Adjust the pitch of the note with the shift
-                # If modulation is 0 (default) then we don't change the pitch at all
-                pitch = pitch + shift
+                        # Decide if we apply a shift of one octave downwards when modulating
+                        if cur_avg[track] + s < self.trc_avg[track] + 6:
+                            shift = s
+                        else:
+                            shift = s - 12
 
-                # Bring the pitch back up one octave if for whatever reason we shifted
-                # the note to far down
-                if pitch < 0:
-                    pitch += 12
-                # Bring the pitch down if we exceed 127. The highest value of midi files (0x7F)
-                if pitch > 127:
-                    pitch -= 12
-                # Apply our offset to encode less notes [0, 83]
-                pitch -= EncodingConfig.note_offset
+                        # Adjust the pitch of the note with the shift
+                        # If modulation is 0 (default) then we don't change the pitch at all
+                        pitch = pitch + shift
 
-                # Do some checks again to ensure that the note is within our interval of wanted notes
-                # [0, note_size (84)]
-                # Since notes above 84 are not used, and we want to keep the dictionary concise
-                if pitch < 0:
-                    pitch = 0
-                if pitch > EncodingConfig.note_size:
-                    pitch = EncodingConfig.note_size - 1
+                        # Apply shift
+                        if pitch < 0:
+                            pitch += 12
+                        if pitch > 127:
+                            pitch -= 12
 
-                # Finally calculate the number which represents the note track and pitch all together
-                note = track * EncodingConfig.note_size + pitch
-                # Append it to our current sequence
-                current_seq.append(note)
+                        # Offset and clip
+                        pitch -= EncodingConfig.note_offset
+                        if pitch < 0:
+                            pitch = 0
+                        if pitch > EncodingConfig.note_size - 1:
+                            pitch = EncodingConfig.note_size - 1
 
-            # Fill in the last note which is played
-            seq.extend(self._reorder_current(current_seq))
-            # And a last time_note with the end_note as well
-            seq.append(EncodingConfig.time_note)
+                        # Encode token
+                        note = track * EncodingConfig.note_size + pitch
+                        # Write the note to the current sequence of this sixteenth note
+                        seq_buffer[0][1].append(note)
+
+            # Write all sequences to seq
+            for _, sub_seq in seq_buffer:
+                sub_seq.append(EncodingConfig.end_note)
+                seq.extend(EncodingConfig.reorder_current(sub_seq))
+
             seq.append(EncodingConfig.end_note)
-            current_seq = []
-        # Store all the sequences, lists of tokens, as a pickle file
-        with open(file_path + '.tmp', mode='wb') as f:
-            pickle.dump(seq, f)
 
-    def _reorder_current(self, cur_seq):
-        # Reorder the sequence so that piano is the last instrument
-        # Bass: [0 * 84, 0 * 84 + 83] = [0, 83]
-        # Drums: [1 * 84, 1 * 84 + 83] = [84, 167]
-        # Piano: [2 * 84, 2 * 84 + 83] = [168, 251]
-        # Guitar: [3 * 84, 3 * 84 + 83] = [252, 335]
-        # Strings: [4 * 84, 4 * 84 + 83] = [336, 419]
-
-        cur = []
-        for c in sorted(cur_seq):
-            # Checks if a note c is not in the range [84, 168)
-            # i.e. if the instrument is not drums
-            if not (c >= EncodingConfig.note_size and c < EncodingConfig.note_size * 2):
-                cur.append(c)
-        for c in sorted(cur_seq):
-            # Checks if a note c is in the range [84, 168)
-            # i.e. if the instrument is drums
-            if (c >= EncodingConfig.note_size and c < EncodingConfig.note_size * 2):
-                cur.append(c)
-
-        return cur  # Bass, Piano, etc..., Drums
+            # Store all the sequences, lists of tokens, as a pickle file
+            with open(file_path + f'.{s}.tmp', mode='wb') as f:
+                pickle.dump(seq, f)
 
     # Use a wrapper if encoding a file delivers an exception
     def safe_run(self, file):
@@ -192,13 +278,15 @@ class Runner:
             print(f'Error processing {file}: {e}')
 
 
-def encode_dataset(output,
-                   dataset: str = 'lpd_5',
-                   process: int = 4,
-                   da: int = 5,
-                   sequence_length: int = 1024,
-                   chunk_size: int = 400_000,
-                   encode_from_tmp: bool = False):
+def encode_dataset(
+        output,
+        dataset: str = 'lpd_5',
+        num_workers: int = 4,
+        da: int = 5,
+        sequence_length: int = 1024,
+        chunk_size: int = 400_000,
+        encode_from_tmp: bool = False
+):
     """Encodes the Lakh Pianoroll Dataset into tokenized sequences for machine learning training.
 
         This function processes MIDI pianoroll data from the LPD-5 dataset, converting it into
@@ -210,11 +298,11 @@ def encode_dataset(output,
         reordering to prioritize bass instruments.
 
         :param str output: Output directory path where the encoded dataset chunks will be saved.
-        :param str dataset: Dataset identifier, currently only 'lpd_5' is supported,
-                           defaults to 'lpd_5'.
-        :param int process: Number of parallel processes to use for encoding,
+        :param str dataset: Dataset path,
+                            defaults to 'lpd_5'.
+        :param int num_workers: Number of parallel processes to use for encoding,
                            defaults to 4.
-        :param int da: Data augmentation parameter for pitch modulation (0-11 semitones),
+        :param int da: Applies da random pitch modulations to each track (from -5 to +6 semitones),
                       defaults to 5.
         :param int sequence_length: Length of individual token sequences to generate,
                                    defaults to 1024.
@@ -229,39 +317,29 @@ def encode_dataset(output,
                  track ordering information to the output directory.
         :rtype: None
     """
-    if dataset == 'lpd_5':
-        tracks = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
-        if os.path.isdir('lpd_5/lpd_5_full'):
-            dataset_path = 'lpd_5/lpd_5_full/*/*.npz'
-        elif os.path.isdir('lpd_5/lpd_5_cleansed'):
-            dataset_path = 'lpd_5/lpd_5_cleansed/*/*/*/*/*.npz'
+    if os.path.isdir(dataset):
+        if os.path.basename(dataset) == 'lpd_5':
+            dataset_path = os.path.join(dataset, 'lpd_5_cleansed/*/*/*/*/*.npz')
         else:
-            print('invalid dataset')
-            exit()
+            raise AssertionError(f'Invalid dataset: {dataset}')
     else:
-        print('invalid dataset')
-        exit()
+        raise FileNotFoundError(f'Dataset not found: {dataset}')
 
-    # Check if the directory exists
-    if not os.path.exists(output):
-        # Create the directory
-        os.makedirs(output)
+    # Get all midi files from dataset structure
+    pianoroll_files = list(glob.glob(dataset_path))
 
-    trc_len = len(tracks)
-    # Push Bass index in front of leaving others as is
-    # [3, 0, 1, 2, 4]
-    # [Bass, Drums, Piano, Guitar, Strings]
-    trc_idx = sorted(list(range(trc_len)), key=lambda x: 0 if tracks[x] == 'Bass' else 1)
-
-    if encode_from_tmp is False:
-        pianoroll_files = []
-        if not os.path.exists(os.path.join('lpd_5', f'trc_avg.pkl')):
+    if encode_from_tmp:
+        print('Skipping encoding stage. (1/3)')
+    else:
+        if os.path.exists(os.path.join(dataset, f'trc_avg.pkl')):
+            print('Get average pitch value per track over entire dataset from file. (1/3)')
+            # Load the pickle file
+            with open(os.path.join(dataset, 'trc_avg.pkl'), mode='rb') as f:
+                trc_avg = pickle.load(f)
+        else:
             # Get an average of each pitch value per track over all datapoints
-            trc_avg_c = np.zeros((len(tracks), 2))
-            for file_path in tqdm(glob.glob(dataset_path),
-                                  desc='Get average pitch value per track over entire dataset. (1/3)'):
-                # Save npz path into list
-                pianoroll_files.append(file_path)
+            trc_avg_c = np.zeros((len(EncodingConfig.midi_tracks), 2))
+            for file_path in tqdm(pianoroll_files, desc='Get average pitch value per track over entire dataset. (1/3)'):
                 # Load it as a multitrack object
                 m = pypianoroll.load(file_path)
                 # Convert it to a numpy array of shape (num_time_steps, num_pitches=128, num_tracks)
@@ -269,7 +347,7 @@ def encode_dataset(output,
                 # Transpose the array to have shape (num_time_steps, num_pitches, num_tracks)
                 pr = np.transpose(pr, (1, 2, 0))
                 # Change ordering to get the bass first and have consistent indexing
-                pr = pr[:, :, trc_idx]
+                pr = pr[:, :, EncodingConfig.trc_idx]
                 # Get all time steps of notes being played
                 p = np.where(pr != 0)
                 for i in range(len(p[0])):
@@ -290,69 +368,84 @@ def encode_dataset(output,
             trc_avg = np.where(trc_avg_c[:, 1] > 0, trc_avg_c[:, 0] / trc_avg_c[:, 1], 60)
 
             # Store all the trc avg, as a pickle file since it takes 40min to calculate
-            with open(os.path.join('lpd_5', f'trc_avg.pkl'), mode='wb') as f:
+            with open(os.path.join(dataset, f'trc_avg.pkl'), mode='wb') as f:
                 pickle.dump(trc_avg, f)
 
             del trc_avg_c
             gc.collect()
-        else:
-            print('Get average pitch value per track over entire dataset from file. (1/3)')
-            # Load the pickle file
-            with open(os.path.join('lpd_5', 'trc_avg.pkl'), mode='rb') as f:
-                trc_avg = pickle.load(f)
-            # Search for the file paths with glob
-            pianoroll_files = list(glob.glob(dataset_path))
 
-        # Create a runner class to transfer read only variables to the processes
-        runner = Runner(trc_idx, da, trc_avg)
+        # Create a runner class to transfer read-only variables to the processes
+        runner = Runner(da, trc_avg, not encode_from_tmp)
 
         # Encode the midi files as token encodings
-        results = []
         with tqdm(total=len(pianoroll_files), desc='Encode midi files as token encoding. (2/3)') as t:
-            with Pool(process) as p:
+            with Pool(num_workers) as p:
                 for _ in p.imap_unordered(runner.safe_run, pianoroll_files):
                     t.update(1)
-    else:
-        pianoroll_files = list(glob.glob(dataset_path))
 
-    numfiles = 0
-    chunks = []
-    current_chunk = []
-    for file_path in tqdm(pianoroll_files, desc='Create chunks from the temporary files. (3/3)'):
-        # Open temporary the encoding file
-        with open(file_path + '.tmp', mode='rb') as f:
-            file_chunk = pickle.load(f)
-        # Loop through the tokens in the sequence and split them into chunks of combine size
-        for note in file_chunk:
-            # Fill current sub chunk
-            current_chunk.append(note)
-            if len(current_chunk) > int(sequence_length) - 1:
-                # Save full chunk in list
-                chunks.append(np.stack(current_chunk))
-                # Start a new sub chunk
-                current_chunk = []
-        # Save the chunk if its size exceeds, for example, 50000 sequences
-        # A chunk with 50000 sequences of length 4096 will take up around 390MB in memory
-        # It will take around 0.48 seconds to load it into memory
-        # Good enough if we load it in a second threat
-        if len(chunks) > int(chunk_size):
-            # Cast them to uint16 for less memory usage
-            optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
-            np.savez_compressed(os.path.join(output, f'{numfiles:03d}.npz'), data=optimized_chunks)
-            numfiles += 1
-            chunks = []
+    print(f'Starting chunking stage with {num_workers} worker processes.')
 
-    # Save last chunk even if it's not finished yet
-    # Nope, we ignore the last chunk since it would have a different size and could not be stored in our matrix
-    ### TODO Implement a padding function for the last sequence in the last chunk
-    # chunks.append(current_chunk)
-    # Cast them to uint16 for less memory usage
-    optimized_chunks = np.array([np.array(chunk, dtype=np.uint16) for chunk in chunks])
-    np.savez_compressed(os.path.join(output, f'{numfiles:03d}.npz'), data=optimized_chunks)
-    chunks = []
+    output = f'{output}_da_{da}'
+    # Check if the directory exists
+    if not os.path.exists(output):
+        # Create the directory
+        os.makedirs(output)
+
+    # Always get the 0 modulated encoded file and da random ones as well
+    possible_shifts = list(range(-5, 0)) + list(range(1, 7))
+    np.random.shuffle(possible_shifts)
+
+    shifts_to_use = [0] + possible_shifts[:da]
+    # Create the set of desired file endings
+    desired_endings = {f'.{s}.tmp' for s in shifts_to_use}
+
+    all_tmp_files = glob.glob(os.path.join(dataset, 'lpd_5_cleansed/*/*/*/*/*.npz.*.tmp'))
+
+    # Filter the list
+    encoded_files = [
+        f for f in all_tmp_files
+        if any(f.endswith(ending) for ending in desired_endings)
+    ]
+
+    results_queue = mp.Queue()
+    # A signal to tell the writer when all workers are done
+    sentile = None
+
+    # Split the list of files among the worker processes
+    file_chunks = np.array_split(encoded_files, num_workers)
+
+    # Create and start the single writer process
+    writer_process = mp.Process(
+        target=save_chunks_writer,   # An approximation of the number of sequences
+        args=(output, results_queue, 300_000 * (da+1), chunk_size, sentile)
+    )
+    writer_process.start()
+
+    # Create and start the worker processes
+    worker_processes = []
+    for i in range(num_workers):
+        p = mp.Process(
+            target=process_files_worker,
+            args=(file_chunks[i].tolist(), results_queue, sequence_length)
+        )
+        worker_processes.append(p)
+        p.start()
+
+    # Wait for all workers to finish their file processing
+    for p in worker_processes:
+        p.join()
+
+    # Once all workers are done, send the sentinel to tell the writer to stop
+    results_queue.put(sentile)
+
+    # Wait for the writer process to finish saving everything
+    writer_process.join()
+
     # Save the ordering of the tracks
     with open(os.path.join(output, 'tracks.trc'), 'w') as f:
-        f.write(','.join([tracks[t] for t in trc_idx]))
+        f.write(','.join([EncodingConfig.encoding_order[t] for t in EncodingConfig.trc_idx]))
+
+    print('Dataset encoding finished successfully.')
 
 
 if __name__ == '__main__':
@@ -367,8 +460,6 @@ if __name__ == '__main__':
                         help='Grap the encodings and chunk them together from already encoded tmp files', type=bool,
                         default=False)
     args = parser.parse_args()
-
-    assert args.dataset == 'lpd_5', 'Dataset required lpd_5'
 
     encode_dataset(args.output,
                    args.dataset,

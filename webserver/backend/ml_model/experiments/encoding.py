@@ -5,7 +5,7 @@ import numpy as np
 import pypianoroll
 from backend.ml_model.helper import EncodingConfig
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 
 class NewEncodingConfig:
@@ -44,7 +44,9 @@ class NewEncodingConfig:
     end_note: int = None
 
     # Drum pitches used in your dataset (sorted)
-    drum_pitches: List[int] = [35, 36, 37, 38, 39, 40, 42, 44, 46, 49, 51, 54, 59, 62, 63, 64, 69, 70, 82]
+    drum_pitches: List[int] = [27, 28, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50,
+                               51, 53, 54, 55, 56, 57, 59, 60, 61, 62, 63, 64, 65, 67, 68, 69, 70, 73, 75,
+                               76, 77, 80, 81, 82, 83, 85, 87]
 
     # Microtiming definitions: (delta in steps)
     microtimings: List[int] = [-2, -1, 1, 2, 3]
@@ -102,6 +104,20 @@ class NewEncodingConfig:
         cls.vocab_size = current
         cls.tokens = list(range(cls.vocab_size))
 
+    @staticmethod
+    def reorder_current(cur_seq):
+        """
+        Reorder the sequence in one timestep so that melodic tokens always come first and are ordered accendingly.
+        Assumes instruments are encoded in blocks of size EncodingConfig.note_size.
+        """
+        # Stort melodic tokens in an accenting order
+        melodic_notes = [c for c in cur_seq if 0 <= c < NewEncodingConfig.instrument_bases['Drums']]
+        # Dont sort drum tokens, though, since microtiming tokens and special tokens depend on order
+        other_notes = [c for c in cur_seq if NewEncodingConfig.instrument_bases['Drums'] <= c < NewEncodingConfig.vocab_size]
+
+        # Sort each group to keep deterministic ordering
+        return sorted(melodic_notes) + other_notes
+
 
 NewEncodingConfig.initialize()
 
@@ -129,38 +145,23 @@ def _reorder_current(cur_seq):
     return cur  # Bass, Piano, etc..., Drums
 
 
-def _new_reorder_current(cur_seq):
-    """
-    Reorder the sequence in one timestep so that bass notes always come first.
-    Assumes instruments are encoded in blocks of size EncodingConfig.note_size.
-    """
-
-    bass_start = 0
-    bass_end = EncodingConfig.note_size  # Bass: [0, note_size)
-
-    bass_notes = [c for c in cur_seq if bass_start <= c < bass_end]
-    other_notes = [c for c in cur_seq if not (bass_start <= c < bass_end)]
-
-    # Sort each group to keep deterministic ordering
-    return sorted(bass_notes) + sorted(other_notes)
-
-
-def test_encoding_decoding():
+def test_encoding_decoding(new_encoding=False):
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Change the working directory to the script's directory
     os.chdir(script_dir)
-    file_path = 'K/J/M/TRKJMLE128F92E5B12/08548ae294e0f8f0aa6fde2ba0454026.npz'
+    file_path = 'M/M/M/TRMMMQN128F4238509/a04d6f748582e3bb25fc2d1108f71573.npz'
     # Grap one of the encoded midi files
     original_file_path = os.path.join('..', 'lpd_5', 'lpd_5_cleansed', file_path)
     encoded_file_path = os.path.join('..', 'lpd_5', 'lpd_5_cleansed', f'{file_path}.tmp')
 
-    # Remove old one if it still exists
-    if os.path.exists(encoded_file_path):
-        os.remove(encoded_file_path)
+    if new_encoding:
+        # Remove old one if it still exists
+        if os.path.exists(encoded_file_path):
+            os.remove(encoded_file_path)
 
-    # Encode the file and save it in the same place just with .tmp added
-    new_encode(original_file_path, encoding_resolution=4)
+        # Encode the file and save it in the same place just with .tmp added
+        new_encode(original_file_path, encoding_resolution=4)
 
     # Open original as a Multitrack object
     mt_original = pypianoroll.load(original_file_path)
@@ -192,14 +193,7 @@ def test_encoding_decoding():
     print('fin')
 
 
-def new_encode(file_path, encoding_resolution, number_of_modulations=0):
-    if os.path.exists(os.path.join('../lpd_5', 'trc_avg.pkl')):
-        with open(os.path.join('../lpd_5', 'trc_avg.pkl'), mode='rb') as f:
-            trc_avg = pickle.load(f)
-    else:
-        raise FileNotFoundError('trc_avg.pkl not found')
-
-    seq = []
+def new_encode(file_path, encoding_resolution):
     # Load it as a multitrack object
     m = pypianoroll.load(file_path)
 
@@ -226,96 +220,67 @@ def new_encode(file_path, encoding_resolution, number_of_modulations=0):
     # 3 = String (Program: 48)
     # 4 = Drums (Program: Drums (0))
 
-    # Again get all time steps of notes being played
-    p = np.where(pr != 0)
-    # Calculate the average pitch of this song per track
-    cur_avg_c = np.zeros((len(NewEncodingConfig.midi_tracks), 2))
-    for i in range(len(p[0])):
-        # Track of the note at timestep i
-        track = p[2][i]
-        # The pitch of the note
-        pitch = p[1][i]
-        # Save them into our array
-        cur_avg_c[track, 0] += pitch
-        cur_avg_c[track, 1] += 1
+    seq = []
+    # last, next buffer
+    seq_buffer = [
+        # Anchor tick, buffer
+        (0, []),
+        (6, [])
+    ]
+    for tick in range(pr.shape[0]):
+        # Update our valid positions
+        if tick % step == 0 and tick != 0:
+            # We have advanced to the next valid sixteenth note,
+            # thus we rotate out the last sequence and write it to seq
+            _, last_seq = seq_buffer[0]
+            last_seq.append(NewEncodingConfig.time_note)
+            seq.extend(NewEncodingConfig.reorder_current(last_seq))
+            # Remove the last sequence and add new next sequence
+            seq_buffer.pop(0)
+            seq_buffer.append((tick + step, []))
 
-    # Replace count of 0 to 1
-    cur_avg_c[:, 1] = np.where(cur_avg_c[:, 1] == 0, 1, cur_avg_c[:, 1])
-    # Perform the division safely
-    cur_avg = np.where(cur_avg_c[:, 1] > 0, cur_avg_c[:, 0] / cur_avg_c[:, 1], 60)
-    # Create list with [0, random permutation of the numbers 1 - 12]
-    modulation = [0] + (np.random.permutation(11) + 1).tolist()
-
-    ### TODO: Look at the forth 35 event. It is off by a beat
-    count_35 = 0
-
-    current_seq = []
-    # Do data augmentation according to specified parameter 'da' in range [0-11]
-    # All sequences are appended to the same list
-    for s in modulation[:number_of_modulations + 1]:
-        pos = 0
-        # Create an encoding sequence for each modulation
-        for i in range(len(p[0])):
-            tick = p[0][i]
-            pitch = p[1][i]
-            track = p[2][i]
-
-            if pitch == 35 and track == 4:
-                count_35 += 1
-                if count_35 == 4:
-                    print('found it')
-                    ### TODO: Fix wrong encoding of this test trac at beat 5 note 35 in drum track
-                    # Encoding seems to work maybe decoding has a problem
+        # active has shape (N, 2) with columns [pitch, track]
+        active = np.argwhere(pr[tick] != 0)
+        for pitch, track in active:
 
             # -------------------
             # Handle drum events
             # -------------------
             if track == NewEncodingConfig.encoding_order.index('Drums'):
-                # Find nearest anchor (0,6,12,18)
-                tick_mod = tick % 24
-                anchor = min([0, 6, 12, 18], key=lambda a: abs(tick_mod - a))
-                offset = tick_mod - anchor
+                if pitch not in NewEncodingConfig.drum_pitches:
+                    continue
 
-                # Wrap offsets into our list of micro timings
-                if not (offset in NewEncodingConfig.microtimings or offset == 0):
-                    continue  # discard if it's outside microtiming window
+                # Determine to which sixteenth note this note snaps to (either next or last)
+                offset = tick - seq_buffer[0][0]
+                if offset <= 3:
+                    buffer = 0
+                else:
+                    offset = tick - seq_buffer[1][0]
+                    buffer = 1
+
+                if offset not in [-2, -1, 0, 1, 2, 3]:
+                    raise ValueError(f'Invalid offset: {offset}')
 
                 # Map pitch
-                if pitch not in NewEncodingConfig.drum_pitches:
-                    continue  # skip if pitch not in our list
                 drum_token = NewEncodingConfig.drum_pitch_to_token[pitch]
 
                 # Add base drum token
-                current_seq.append(drum_token)
+                seq_buffer[buffer][1].append(drum_token)
 
                 # Add timing offset if not 0
                 if offset != 0:
                     offset_token = NewEncodingConfig.microtiming_delta_to_token[offset]
-                    current_seq.append(offset_token)
+                    seq_buffer[buffer][1].append(offset_token)
 
             # ------------------------
             # Handle pitched instruments
             # ------------------------
             else:
-                # Only accept notes on grid 0,6,12,18
+                # Only accept notes on grid 0,6,12,18 and only write to the current sequence
                 if tick % step != 0:
                     continue
 
-                if pos < tick:
-                    # Flush notes until we reach this tick
-                    for _ in range(pos, tick, step):
-                        seq.extend(_new_reorder_current(current_seq))
-                        seq.append(NewEncodingConfig.time_note)
-                        current_seq = []
-                pos = tick
-
-                if cur_avg[track] + s < trc_avg[track] + 6:
-                    shift = s
-                else:
-                    shift = s - 12
-
-                # Apply shift
-                pitch = pitch + shift
+                # Apply shift (for simplicity we develop this function without modulation)
                 if pitch < 0:
                     pitch += 12
                 if pitch > 127:
@@ -330,12 +295,15 @@ def new_encode(file_path, encoding_resolution, number_of_modulations=0):
 
                 # Encode token
                 note = track * NewEncodingConfig.note_size + pitch
-                current_seq.append(note)
+                # Write the note to the current sequence of this sixteenth note
+                seq_buffer[0][1].append(note)
 
-        # Flush last notes
-        seq.extend(_reorder_current(current_seq))
-        seq.append(NewEncodingConfig.time_note)
-        seq.append(NewEncodingConfig.end_note)
+    # Write all sequences to seq
+    for _, sub_seq in seq_buffer:
+        sub_seq.append(NewEncodingConfig.end_note)
+        seq.extend(NewEncodingConfig.reorder_current(sub_seq))
+
+    seq.append(NewEncodingConfig.end_note)
 
     # Store all the sequences, lists of tokens, as a pickle file
     with open(file_path + '.tmp', mode='wb') as f:
@@ -347,21 +315,20 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
     with open(encoded_file_path, mode='rb') as f:
         file_chunk = pickle.load(f)
 
-    step = 24 // encoding_resolution
+    resolution = 24
+    step = resolution // encoding_resolution
 
     # Create empty pianoroll array with resolution 24
-    pianoroll = np.zeros((len(NewEncodingConfig.encoding_order), length * 24, 128))
+    pianoroll = np.zeros((len(NewEncodingConfig.encoding_order), length, 128))
 
-
-
-    pos = 0
+    current_tick = 0
     # Decode it again
     for i in range(len(file_chunk)):
         note = file_chunk[i]
         if note == NewEncodingConfig.time_note:
             # Either way update the position by 6 (step)
-            pos += step
-            if pos >= pianoroll.shape[1]:
+            current_tick += step
+            if current_tick >= pianoroll.shape[1]:
                 break
         else:
             if note < NewEncodingConfig.instrument_bases['Drums']:
@@ -376,7 +343,7 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
                 # Calculate the midi note value
                 midi_value = note % NewEncodingConfig.note_size + NewEncodingConfig.note_offset
                 # Position is normal since melodic notes can only be placed on steps of 6
-                pianoroll_pos = pos
+                pianoroll_tick = np.arange(current_tick, min(length, current_tick + step))
             elif note < NewEncodingConfig.instrument_bases['Microtimings']:
                 # It is a drum note
                 trc = NewEncodingConfig.midi_tracks.index('Drums')
@@ -389,14 +356,14 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
                         # It is a microtiming, so we have to adjust the position by the offset
                         offset = NewEncodingConfig.microtiming_token_to_delta[microtiming]
                         # Add offset to the position
-                        pianoroll_pos = pos + offset
+                        pianoroll_tick = current_tick + offset
                     else:
                         # It is not a microtiming but some other note, which means we do not have an offset
-                        pianoroll_pos = pos
+                        pianoroll_tick = current_tick
                 else:
                     # There is not further note, which means no microtiming note
-                    pianoroll_pos = pos
-            elif note < NewEncodingConfig.instrument_bases['Special']:
+                    pianoroll_tick = current_tick
+            elif note < 360: # NewEncodingConfig.instrument_bases['Special']
                 # It is a Microtimings token. We should always skip them since they always come paired with drum tokens.
                 # Skip the next token for encoding since we know its a microtiming token
                 continue
@@ -405,15 +372,19 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
                 continue
 
             if midi_value < 128:
-                pianoroll[trc, pianoroll_pos, midi_value] = 100
+                pianoroll[trc, pianoroll_tick, midi_value] = 100
 
     pr = []
-    for i, t in enumerate(EncodingConfig.tracks):
+    for i, t in enumerate(EncodingConfig.midi_tracks):
         pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t],
                                             is_drum=(t == 'Drums')))
     mt_decoded = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=24)
 
     return mt_decoded
+
+
+def step_to_pos(x, resolution=24, beats_per_bar=4):
+    return f'Bar: {(x // resolution) // beats_per_bar + 1}, Beat in bar: {(x // resolution) % beats_per_bar + 1}, Sixteenth note: {(x % resolution) // (resolution // 4) + 1}'
 
 
 def encode(file_path, dataset_path, encoding_resolution, number_of_modulations=0):
@@ -617,8 +588,7 @@ def decode(encoded_file_path, length, tempo, resolution):
 
     pr = []
     for i, t in enumerate(EncodingConfig.tracks):
-        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t],
-                                            is_drum=(t == 'Drums')))
+        pr.append(pypianoroll.StandardTrack(pianoroll=pianoroll[i], program=EncodingConfig.programs[t], is_drum=(t == 'Drums')))
     mt_decoded = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=resolution)
 
     return mt_decoded

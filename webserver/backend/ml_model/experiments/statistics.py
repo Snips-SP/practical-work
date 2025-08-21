@@ -516,37 +516,31 @@ def get_drum_pitch_counts():
         except Exception as e:
             print(f'Error processing {file_path}: {e}')
 
-    # Save the raw counts to pickle
-    with open('drum_pitch_counts.pkl', 'wb') as f:
-        pickle.dump(drum_pitch_counts, f)
-
     # Calculate coverage-based selection
     total_notes = sum(drum_pitch_counts.values())
     sorted_pitches = sorted(drum_pitch_counts.items(), key=lambda x: x[1], reverse=True)
-
-    coverage_limit = 0.9 * total_notes
-    selected_pitches = []
-    running_total = 0
-
-    for pitch, count in sorted_pitches:
-        selected_pitches.append(pitch)
-        running_total += count
-        if running_total >= coverage_limit:
-            break
-
-    # Save coverage-based selection to pickle
-    with open('../tmp/drum_pitch_coverage_90.pkl', 'wb') as f:
-        pickle.dump(selected_pitches, f)
 
     # Output
     print('\nSorted pitch counts:')
     for pitch, count in sorted_pitches:
         print(f'Pitch {pitch}: {count} occurrences')
 
-    print(f'\nNumber of unique drum pitches: {len(drum_pitch_counts)}')
-    print(f'Selected pitches for 90% coverage: {selected_pitches}')
+    for coverage_percentage in [0.9, 0.95, 0.99]:
 
-    return drum_pitch_counts, selected_pitches
+        coverage_limit = coverage_percentage * total_notes
+        selected_pitches = []
+        running_total = 0
+
+        for pitch, count in sorted_pitches:
+            selected_pitches.append(pitch)
+            running_total += count
+            if running_total >= coverage_limit:
+                break
+
+        print(f'\nNumber of unique drum pitches: {len(drum_pitch_counts)}')
+        print(f'Selected pitches for {coverage_percentage * 100}% coverage: {selected_pitches}')
+        print(f'Total number of selected pitches: {len(selected_pitches)}')
+        print(f'')
 
 
 if __name__ == '__main__':

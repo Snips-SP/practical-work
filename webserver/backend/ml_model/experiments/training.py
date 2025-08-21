@@ -9,57 +9,6 @@ from backend.ml_model.train import NetworkConfig
 
 EncodingConfig.initialize()
 
-def train_many_configs():
-    config1 = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=256,  # Context window size
-        n_embd=256,  # Embedding size
-        n_layer=2,  # Number of transformer layers
-        n_head=2,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
-    )
-
-    config2 = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=256,  # Context window size
-        n_embd=256,  # Embedding size
-        n_layer=4,  # Number of transformer layers
-        n_head=4,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
-    )
-
-    config3 = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=256,  # Context window size
-        n_embd=240,  # Embedding size
-        n_layer=6,  # Number of transformer layers
-        n_head=6,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
-    )
-    num_epochs = 2
-    batch_size = 16
-    learning_rate = 1e-4
-    lr_scheduler = 'cosine'
-    gradient_checkpointing = False
-    RAM_dataset = True
-    device = 'xpu'
-
-    # Train with same parameters but different configs
-    for name, config in [('tiny', config1), ('small', config2), ('medium', config3)]:
-        train(num_epochs=num_epochs,
-              batch_size=batch_size,
-              learning_rate=learning_rate,
-              lr_scheduler=lr_scheduler,
-              gradient_checkpointing=gradient_checkpointing,
-              RAM_dataset=RAM_dataset,
-              device=device,
-              continue_from=None,
-              model_name=name,
-              config=config)
-
 
 def training_test():
     # Set training parameters

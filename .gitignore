@@ -7,6 +7,9 @@
 
 /webserver/backend/ml_model/tmp/
 /webserver/backend/ml_model/ldp_5_dataset/
+/webserver/backend/ml_model/ldp_5_dataset_da_0/
+/webserver/backend/ml_model/ldp_5_dataset_da_6/
+/webserver/backend/ml_model/ldp_5_dataset_da_12/
 /webserver/backend/ml_model/lpd_5/
 /webserver/backend/ml_model/ldp_5_dataset_fully_modulated/
 
