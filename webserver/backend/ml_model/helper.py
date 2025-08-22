@@ -20,7 +20,13 @@ class EncodingConfig:
     padding_token: int = None
     vocab_size: int = None
 
-    # Instrument configuration
+    # Pianoroll config
+    # Every quarter note is split into 24 steps in each pianoroll
+    pianoroll_resolution: int = 24
+    # We mainly encode only sixteenth notes, except for drums where we encode the whole pianoroll resolution
+    encoding_resolution: int = 4
+
+    # Instrument config
     # The order of tracks in which they appear in the dataset
     midi_tracks: List[str] = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
     # The order we wish to encode the notes in (As string and as indices of midi_tracks)

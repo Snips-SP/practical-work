@@ -363,7 +363,7 @@ def new_decode(encoded_file_path, length, tempo, encoding_resolution=4):
                 else:
                     # There is not further note, which means no microtiming note
                     pianoroll_tick = current_tick
-            elif note < 360: # NewEncodingConfig.instrument_bases['Special']
+            elif note < NewEncodingConfig.instrument_bases['Special']:
                 # It is a Microtimings token. We should always skip them since they always come paired with drum tokens.
                 # Skip the next token for encoding since we know its a microtiming token
                 continue

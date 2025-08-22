@@ -1,19 +1,11 @@
 from backend.ml_model.generate import generate_from_chords
 from backend.ml_model.helper import mid_to_mp3
-from flask import Flask, render_template, jsonify, session, request
+from flask import Flask, render_template, jsonify, request
 from urllib.parse import quote
-import uuid
 import os.path
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 app.secret_key = 'secret_keyyyy'
-
-
-@app.before_request
-def set_session():
-    # Create a session for the user if it doesn't already exist
-    if 'user_id' not in session:
-        session['user_id'] = str(uuid.uuid4())  # Generate a unique user ID
 
 
 @app.route('/')
@@ -25,12 +17,7 @@ def index():
 def play_song():
     song = request.args.get('song')
     if song:
-        user_id = session.get('user_id')
-        if user_id is None:
-            return jsonify({'error': 'Session expired or invalid'}), 401
-
-        session_dir = os.path.join('static', 'music', user_id)
-        songs = [os.path.splitext(f)[0] for f in os.listdir(session_dir) if f.endswith('.mp3')]
+        songs = [os.path.splitext(f)[0] for f in os.listdir(os.path.join('static', 'music')) if f.endswith('.mp3')]
 
         if song not in songs:
             return jsonify({'error': 'No song found'}), 400
@@ -38,7 +25,7 @@ def play_song():
         filename = f'{song}.mp3'
         # Encode just the filename, not the entire path
         encoded_filename = quote(filename)
-        audio_url = f'/static/music/{user_id}/{encoded_filename}'
+        audio_url = f'/static/music/{encoded_filename}'
 
         return jsonify({'audio_url': audio_url})
 
@@ -47,17 +34,13 @@ def play_song():
 
 @app.route('/get-songs', methods=['GET'])
 def get_songs():
-    # Get a list of all songs in the current user directory
-    user_id = session.get('user_id')
-    if user_id is None:
-        return jsonify({'error': 'Session expired or invalid'}), 401
+    # Get a list of all songs
+    music_dir = os.path.join('static', 'music')
 
-    session_dir = os.path.join('static', 'music', user_id)
-
-    if not os.path.exists(os.path.join('static', 'music', user_id)):
+    if not os.path.exists(music_dir):
         return jsonify({'songs': []})
     # Get all songs without their extension
-    songs = [os.path.splitext(f)[0] for f in os.listdir(session_dir) if f.endswith('.mp3')]
+    songs = [os.path.splitext(f)[0] for f in os.listdir(music_dir) if f.endswith('.mp3')]
 
     return jsonify({'songs': songs})
 
@@ -82,11 +65,6 @@ def get_models():
 
 @app.route('/generate-music', methods=['POST'])
 def generate_music():
-    user_id = session.get('user_id')
-
-    if user_id is None:
-        return jsonify({'error': 'Session expired or invalid'}), 401
-
     # Check user input
     bpm = request.json.get('bpm', None)
     if bpm is None:
@@ -127,16 +105,16 @@ def generate_music():
         return jsonify({'error': f'Error parsing chord progression: {str(e)}'}), 400
 
     # Get right folder for user
-    session_dir = os.path.join('static', 'music', user_id)
-    os.makedirs(session_dir, exist_ok=True)
+    music_dir = os.path.join('static', 'music')
+    os.makedirs(music_dir, exist_ok=True)
 
     # Get generated songs from user
-    contents = os.listdir(session_dir)
-    # Create new name from used gpt2 model and chords
+    contents = os.listdir(music_dir)
+    # Create a new name from the used gpt2 model and chords
     current_song_name = f'{os.path.basename(model_path)}_{"_".join(chords)}_{bpm}BPM_{len(contents) + 1}'
-    new_song_path = os.path.join(session_dir, f'{current_song_name}.mp3')
+    new_song_path = os.path.join(music_dir, f'{current_song_name}.mp3')
 
-    # Make temporary folder and file location
+    # Make a temporary folder and file location
     os.makedirs(os.path.join('backend', 'tmp'), exist_ok=True)
     tmp_mid_file = os.path.join('backend', 'tmp', f'{current_song_name}.mid')
 
@@ -148,9 +126,9 @@ def generate_music():
     # Trim and convert to mp3
     mid_to_mp3(tmp_mid_file, os.path.join('backend', 'SoundFont.sf2'), new_song_path)
 
-    # Remove temporary midi file (we only need to keep the mp3 file)
-    # os.remove(tmp_mid_file)
+    # Remove the temporary midi file (we only need to keep the mp3 file)
     # We are keeping them for now for analysis
+    # os.remove(tmp_mid_file)
 
     return jsonify({'audio_url': new_song_path,
                     'song_name': current_song_name})

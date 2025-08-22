@@ -1,4 +1,4 @@
-from backend.ml_model.helper import chord2tokens, load_latest_checkpoint, EncodingConfig
+from backend.ml_model.helper import chord2tokens, load_latest_checkpoint, EncodingConfig, get_device
 import numpy as np
 import torch
 import pypianoroll
@@ -38,7 +38,7 @@ def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, s
                 max_length=current_context.shape[1] + step_size,
                 temperature=0.7,
                 top_k=0,
-                top_p=0.9,
+                top_p=0.45,
                 do_sample=True,
                 use_cache=True
             )
@@ -83,7 +83,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     :rtype: str
     """
     # Use appropriate xpu, cude or cpu device
-    device = ('xpu' if torch.xpu.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device('xpu')
 
     # Check if the run folder exists
     if not os.path.isdir(model_dir):
@@ -93,8 +93,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     if len(chords) != len(timings):
         raise ValueError('The number of chords must be equal to the number of timings')
 
-    print(f'Loading model from: {model_dir}')
-
+    # Load model from the folder
     model, _, _, _ = load_latest_checkpoint(model_dir)
     # Move to device
     model.to(device)
@@ -111,70 +110,117 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
 
     # Create an empty pianoroll array
     total_steps = sum(timings)
-    pianoroll = np.zeros((len(EncodingConfig.tracks), total_steps, 128))
 
     # Initialize context with special token and the first chord
     context_sequence.append(EncodingConfig.end_note)
     context_sequence.extend(chord_tokens_queue.popleft())
 
-    current_chord_duration = timings_queue.popleft()
-    time_step_in_chord = 0
+    steps_in_current_chord = timings_queue.popleft()
     generated_sequence_cache = deque()
 
-    # TODO: Get rid of this assumption
-    # We always generate 1024 tokens from a chord which we give the network in the first time step. (The conditioned chord)
-    # We assume that the network will generate 1024 tokens which harmonize with the first chord and
-    # that it does not just switch to a different chord on its own.
+    step = EncodingConfig.pianoroll_resolution // EncodingConfig.encoding_resolution
 
+    # Create an empty pianoroll array with resolution 24
+    pianoroll = np.zeros((len(EncodingConfig.encoding_order), total_steps * step, 128))
+
+    current_tick = 0
+    # Decode it again
     with torch.no_grad(), trange(total_steps) as progress_bar:
-        for pos in progress_bar:
-            # Check if we need to generate more tokens
+        while True:
+            # If the queue is empty, create new tokens
             if not generated_sequence_cache:
                 new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024)
                 generated_sequence_cache.extend(new_tokens)
 
-            # Process tokens until we find a time event
-            while True:
-                if not generated_sequence_cache:
-                    # Regenerate if cache runs out mid-step (rare but possible)
-                    new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024)
-                    generated_sequence_cache.extend(new_tokens)
+            note = generated_sequence_cache.popleft()
+            # Update the context sequence
+            context_sequence.append(note)
+            if note == EncodingConfig.time_note:
+                # Either way update the position by 6 (step)
+                current_tick += step
+                # Update the progress bar by a step
+                progress_bar.update(1)
 
-                note = generated_sequence_cache.popleft()
-                context_sequence.append(note)
+                # Check if we have spent enough time on the chord and need to switch to the next one
+                if steps_in_current_chord <= 1:
+                    # Check if we still have a next chord
+                    if chord_tokens_queue:
+                        # Load the next chord into the context
+                        steps_in_current_chord = timings_queue.popleft()
+                        # Add the basic piano chord to the context queue
+                        context_sequence.extend(chord_tokens_queue.popleft())
+                        # Flush cache after chord change it will be filled at the beginning of next loop
+                        generated_sequence_cache.clear()
+                    else:
+                        # We can terminate
+                        pass
+                else:
+                    steps_in_current_chord -= 1
 
-                if note == EncodingConfig.time_note:
-                    time_step_in_chord += 1
-                    break  # Move to the next time step (pos)
-                elif note < EncodingConfig.time_note:
-                    # Place note in the pianoroll at the current position
-                    track_index = EncodingConfig.trc_idx[note // EncodingConfig.note_size]
-                    midi_note = note % EncodingConfig.note_size + EncodingConfig.note_offset
-                    if midi_note < 128:
-                        pianoroll[track_index, pos, midi_note] = 100
+                # End the generation if we have reached the end
+                if current_tick >= pianoroll.shape[1]:
+                    break
+            else:
+                if note < EncodingConfig.instrument_bases['Drums']:
+                    # It is a melodic note
 
-            # Check for chord change
-            if time_step_in_chord >= current_chord_duration:
-                time_step_in_chord = 0
-                if chord_tokens_queue:
-                    # Load the next chord into the context
-                    current_chord_duration = timings_queue.popleft()
-                    next_chord_tokens = chord_tokens_queue.popleft()
-                    context_sequence.extend(next_chord_tokens)
-                    generated_sequence_cache.clear()  # Flush cache after chord change
+                    # Calculate the trc the note belongs to
+                    # 0 = Bass -> 3 = Bass
+                    # 1 = Piano -> 1 = Piano
+                    # 2 = Guitar -> 2 = Guitar
+                    # 3 = String -> 4 Strings
+                    trc = EncodingConfig.trc_idx[note // EncodingConfig.note_size]
+                    # Calculate the midi note value
+                    midi_value = note % EncodingConfig.note_size + EncodingConfig.note_offset
+                    # Position is normal since melodic notes can only be placed on steps of 6
+                    pianoroll[trc, current_tick:min(pianoroll.shape[1] - 1, current_tick + step), midi_value] = 100
+                elif note < EncodingConfig.instrument_bases['Microtimings']:
+                    # It is a drum note
+                    trc = EncodingConfig.midi_tracks.index('Drums')
+                    midi_value = EncodingConfig.drum_token_to_pitch[note]
+
+                    # Check the next note if its a microtimings note
+                    # Check if the queue is empty
+                    if not generated_sequence_cache:
+                        # Extend the queue with newly generated tokens
+                        new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024)
+                        generated_sequence_cache.extend(new_tokens)
+
+                    if EncodingConfig.instrument_bases['Microtimings'] <= generated_sequence_cache[0] < \
+                            EncodingConfig.instrument_bases['Special']:
+                        # It is a microtiming, so we have to adjust the position by the offset
+                        microtiming = generated_sequence_cache.popleft()
+                        # Update the context sequence
+                        context_sequence.append(microtiming)
+
+                        offset = EncodingConfig.microtiming_token_to_delta[microtiming]
+                        # Add offset to the position if it does not fall out of the length otherwise we discard it
+                        if current_tick + offset < pianoroll.shape[1]:
+                            pianoroll[trc, current_tick + offset, midi_value] = 100
+                    else:
+                        # It is not a microtiming but some other note, which means we do not have an offset
+                        pianoroll[trc, current_tick, midi_value] = 100
+
+                elif note < EncodingConfig.instrument_bases['Special']:
+                    # It is a Microtimings token. They should not appear on their own. Only paired with drum tokens
+                    # where they should always be filtered out by the above function
+                    print(f'Microtimings token found: {note}')
+                    raise ValueError('Microtimings token found')
+                else:
+                    # It is either padding or and end note
+                    continue
 
     # MIDI conversion
     pr = []
-    for i, t in enumerate(EncodingConfig.tracks):
+    for i, t in enumerate(EncodingConfig.midi_tracks):
         pr.append(pypianoroll.StandardTrack(
             pianoroll=pianoroll[i],
             program=EncodingConfig.programs[t],
             is_drum=(t == 'Drums'),
             name=f'Program: {t}, ({EncodingConfig.programs[t]})'
         ))
-
-    mt = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=4)
-
+    # Create the multitrack object and write it to the output
+    mt = pypianoroll.Multitrack(tracks=pr, tempo=np.full(pianoroll.shape[1], tempo), resolution=EncodingConfig.pianoroll_resolution)
     mt.write(output)
 
     return output
