@@ -7,7 +7,7 @@ import os
 from collections import deque
 
 
-def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=256):
+def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=256, temperature=0.7, top_k=0, top_p=0.45):
     """Generates a sequence of tokens using a sliding window approach.
 
     This is useful for generating sequences longer than the model's maximum
@@ -36,9 +36,9 @@ def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, s
             output = model.generate(
                 current_context,
                 max_length=current_context.shape[1] + step_size,
-                temperature=0.7,
-                top_k=0,
-                top_p=0.45,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
                 do_sample=True,
                 use_cache=True
             )
@@ -58,7 +58,7 @@ def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, s
     return all_generated_tokens[:, :max_tokens].cpu().squeeze(0).numpy()
 
 
-def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: str, output: str = 'output.mid'):
+def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: str, output: str = 'output.mid', temperature=1, top_k=0, top_p=0.45):
     """Generates a multitrack MIDI file from a sequence of chords.
 
     This function is the heart of the music generation process. It loads a pre-trained
@@ -74,6 +74,12 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                           dictionary and configuration file.
     :param str output: The file path where the output MIDI file will be saved.
                        Defaults to 'output.mid'.
+    :param float temperature: The sampling temperature for token generation. A higher value results in higher random
+                        Defaults to 0.7.
+    :param int top_k: The number of top-k most likely tokens to consider at each
+                        Defaults to 0.
+    :param int top_p: The cumulative probability for top-p sampling.
+                        Defaults to 0.45.
     :raises FileNotFoundError: If `model_dir` does not exist or if the required
                                model and config files are not found within it.
     :raises IndexError: If the number of chords does not match the number of
@@ -129,7 +135,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
         while True:
             # If the queue is empty, create new tokens
             if not generated_sequence_cache:
-                new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024)
+                new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p)
                 generated_sequence_cache.extend(new_tokens)
 
             note = generated_sequence_cache.popleft()
@@ -183,7 +189,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                     # Check if the queue is empty
                     if not generated_sequence_cache:
                         # Extend the queue with newly generated tokens
-                        new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024)
+                        new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p)
                         generated_sequence_cache.extend(new_tokens)
 
                     if EncodingConfig.instrument_bases['Microtimings'] <= generated_sequence_cache[0] < \

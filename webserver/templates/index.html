@@ -4,54 +4,95 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Backing track generator</title>
-    <link rel="stylesheet" href="static/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom accent color for range inputs */
+        input[type="range"] {
+            accent-color: #38bdf8; /* A nice sky blue color */
+        }
+    </style>
 </head>
-<body>
-    <div class="container">
-        <h1>Backing track generator</h1>
+<body class="bg-slate-900 text-white font-sans flex flex-col items-center min-h-screen">
 
-        <!-- Dropdown Menu (Top Right) -->
-        <div id="dropdown-container">
-            <button id="dropdown-button">\/ Songs</button>
-            <ul id="dropdown-menu" style="display: none;"></ul>
+    <div class="absolute top-4 left-4">
+        <button id="model-dropdown-button" class="bg-slate-800 border border-slate-600 rounded-md px-4 py-2 text-sm w-48 text-left">Loading models...</button>
+        <ul id="model-dropdown-menu" class="absolute mt-1 w-48 bg-slate-800 border border-slate-600 rounded-md shadow-lg z-20 hidden">
+            </ul>
+    </div>
+
+    <div class="absolute top-4 right-4">
+        <button id="dropdown-button" class="bg-slate-800 border border-slate-600 rounded-md px-4 py-2 text-sm">Songs</button>
+        <ul id="dropdown-menu" class="absolute mt-1 right-0 w-48 bg-slate-800 border border-slate-600 rounded-md shadow-lg z-20 hidden">
+             </ul>
+    </div>
+
+    <div class="container w-full max-w-4xl mx-auto p-4 md:p-8 flex flex-col items-center text-center mt-16">
+        <h1 class="text-3xl md:text-4xl font-light lowercase tracking-wider mb-2">Backing track generator</h1>
+        <p id="textbox" class="text-slate-400 mb-8 h-6">Notes to chill and practice to</p>
+
+        <div class="w-full max-w-md mb-4">
+            <label for="song-name-input" class="text-sm text-slate-400 mb-2 block">Song Name</label>
+            <input type="text" id="song-name-input" placeholder="My Awesome Jam..." class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
         </div>
 
-        <!-- Models Dropdown -->
-        <div id="model-dropdown-container">
-            <button id="model-dropdown-button">No models found in run directory</button>
-            <ul id="model-dropdown-menu" style="display: none;"></ul>
-        </div>
-
-        <p id="textbox">Notes to chill and practice to</p>
-
-        <pre id="loading-spinner" style="display: none;">[|]</pre>
-
-        <div class="player">
-            <audio id="audio-player"></audio>
-            <div class="controls">
-                <div class="top-controls">
-                    <button id="generate-button">Gen</button>
-                    <input type="text" id="chord_progression" placeholder="Enter chord progression...">
-                </div>
-                <label for="bpmSlider">BPM   <input type="text" id="bpm" placeholder="Enter bpm..."></label>
-                <div class="bottom-controls">
-                    <button id="play-button"> II </button>
-                    <div class="volume-wrapper">
-                        <div class="volume-bar-container">
-                            <span id="volume-display">|==========|</span>
-                            <input type="range" id="volume-slider" min="0" max="1" step="0.1" value="1">
-                        </div>
+        <div class="w-full mb-6">
+            <label class="text-sm text-slate-400 mb-2 block">Chord Progression</label>
+            <div class="flex items-center justify-center gap-2">
+                <div id="chords-container" class="flex items-start gap-2">
                     </div>
-                    <button id="skip"> >>I </button>
+                <button id="add-chord-btn" class="bg-sky-500 hover:bg-sky-600 rounded-lg w-10 h-32 flex items-center justify-center text-2xl font-bold transition-colors">+</button>
+            </div>
+        </div>
+
+        <div class="w-full max-w-md mb-4">
+            <label for="bpm-slider" class="text-sm text-slate-400 mb-2 block">BPM: <span id="bpm-display">120</span></label>
+            <input type="range" id="bpm-slider" min="40" max="240" value="120" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <div class="w-full max-w-md mb-6">
+            <button id="more-options-btn" class="text-xs text-sky-400 hover:text-sky-300 mb-2">More Options ▼</button>
+            <div id="advanced-options" class="hidden grid grid-cols-3 gap-4 bg-slate-800/50 p-4 rounded-lg">
+                <div>
+                    <label for="temperature-input" class="block text-xs text-slate-400">Temperature</label>
+                    <input type="text" id="temperature-input" value="1.0" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
                 </div>
                 <div>
-                    <span id="currentTime">0:00</span> / <span id="totalTime">0:00</span>
+                    <label for="top-k-input" class="block text-xs text-slate-400">Top K</label>
+                    <input type="text" id="top-k-input" value="0" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
+                </div>
+                <div>
+                    <label for="top-p-input" class="block text-xs text-slate-400">Top P</label>
+                    <input type="text" id="top-p-input" value="0.45" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
+                </div>
+            </div>
+        </div>
+
+        <button id="generate-button" class="bg-sky-500 hover:bg-sky-600 text-slate-900 font-bold py-3 px-8 rounded-lg text-xl mb-6 transition-colors">Generate</button>
+        <pre id="loading-spinner" class="text-2xl hidden">[|]</pre>
+
+        <div class="player w-full max-w-md bg-slate-800/50 rounded-lg p-4">
+            <audio id="audio-player"></audio>
+            <div class="controls flex flex-col gap-4">
+                <div class="flex justify-between items-center">
+                    <button id="play-button" class="text-4xl">▶</button>
+                    <div class="volume-wrapper flex items-center gap-3">
+                         <span class="text-xs">VOL</span>
+                         <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1" class="w-24 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                    <button id="skip-button" class="text-2xl">»|</button>
+                </div>
+                <div class="flex justify-between text-xs text-slate-400 font-mono">
+                    <span id="currentTime">0:00</span>
+                    <span id="totalTime">0:00</span>
                 </div>
             </div>
         </div>
     </div>
-<pre id="ascii-visualizer"> </pre>
-<script src="static/visualizer.js"></script>
-<script src="static/scripts.js"></script>
+
+    <pre id="ascii-visualizer" class="fixed bottom-0 left-0 right-0 h-40 bg-slate-900/80 backdrop-blur-sm text-center font-mono whitespace-pre overflow-hidden text-sky-400 p-2"></pre>
+
+    <script src="static/visualizer.js"></script>
+    <script src="static/chord_editor.js"></script>
+    <script src="static/scripts.js"></script>
 </body>
 </html>
