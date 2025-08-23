@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const durationDisplay = document.createElement('span');
         durationDisplay.className = 'duration-display font-mono w-12 text-center';
-        durationDisplay.textContent = `${duration}n`;
+        durationDisplay.textContent = `${duration}`;
 
         const extendBtn = document.createElement('button');
         extendBtn.textContent = '+';
