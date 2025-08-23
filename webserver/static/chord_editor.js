@@ -190,7 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- NEW: Event listener to load a song's chord data ---
+    // --- Event listener to load a song's chord data ---
     document.addEventListener('loadChordState', (e) => {
         const { chords, timings } = e.detail;
         if (!chords || !timings) return;

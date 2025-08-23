@@ -11,15 +11,12 @@ app.secret_key = 'secret_keyyyy'
 
 
 def sanitize_filename(name):
-    """
-    Takes a string and returns a safe version for a filename.
-    """
     # Replace spaces with underscores
     name = name.replace(' ', '_')
     # Remove all characters that are not alphanumeric, underscores, or hyphens
     name = re.sub(r'[^a-zA-Z0-9_-]', '', name)
     # Ensure it's not empty
-    return name or "untitled"
+    return name or 'untitled'
 
 
 @app.route('/')
@@ -29,20 +26,20 @@ def index():
 
 @app.route('/play-song', methods=['GET'])
 def play_song():
-    song = request.args.get('song')
-    if song:
-        songs = [os.path.splitext(f)[0] for f in os.listdir(os.path.join('static', 'music')) if f.endswith('.mp3')]
+    filename = request.args.get('filename')
+    if filename is None:
+        return jsonify({'error': 'Filename has to be provided'}), 400
 
-        if song not in songs:
-            return jsonify({'error': 'No song found'}), 400
+    songs = [os.path.splitext(f)[0] for f in os.listdir(os.path.join('static', 'music')) if f.endswith('.mp3')]
 
-        # Encode just the filename, not the entire path
-        audio_url = f'static/music{quote(f"{song}.mp3")}'
-        metadata_url = f'static/music{quote(f"{song}.json")}'
+    if filename not in songs:
+        return jsonify({'error': 'No song found'}), 400
 
-        return jsonify({'audio_url': audio_url, 'metadata': metadata_url})
+    # Encode just the filename, not the entire path
+    audio_url = f'static/music/{filename}.mp3'
+    metadata_url = f'static/music/{filename}.json'
 
-    return jsonify({'error': 'No song found'}), 400
+    return jsonify({'audio_url': audio_url, 'metadata_url': metadata_url})
 
 
 @app.route('/get-songs', methods=['GET'])
@@ -85,7 +82,7 @@ def get_models():
 def generate_music():
     # Check user input
     name = request.json.get('song_name', None)
-    if name is None:
+    if name is None or name.strip() == '':
         return jsonify({'error': 'No name provided'}), 400
 
     bpm = request.json.get('bpm', None)
@@ -96,12 +93,12 @@ def generate_music():
     if model_path is None:
         return jsonify({'error': 'Model path directory not found'}), 404
 
-    chords = request.json.get('chord_progression', None)
-    if chords is not None and isinstance(chords, list) and len(chords) != 0:
+    chords = request.json.get('chords', None)
+    if chords is None or not isinstance(chords, list) or len(chords) == 0:
         return jsonify({'error': 'Chords have to be provided as a list with at least 1 element'}), 400
 
     timings = request.json.get('timings', None)
-    if timings is not None and isinstance(timings, list) and len(timings) != 0:
+    if timings is None or not isinstance(timings, list) or len(timings) == 0:
         return jsonify({'error': 'Timings have to be provided as a list with at least 1 element'}), 400
 
     if len(chords) != len(timings):
@@ -183,8 +180,10 @@ def generate_music():
     # We are keeping them for now for analysis
     # os.remove(tmp_mid_file)
 
-    return jsonify({'audio_url': quote(new_song_path),
-                    'song_name': name})
+    return jsonify({'song': {
+        'name': name,
+        'path': filename
+    }})
 
 
 def run():

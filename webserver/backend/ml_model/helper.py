@@ -1,9 +1,10 @@
 from transformers import GPT2Config, GPT2LMHeadModel
-from pydub.silence import split_on_silence
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
 from typing import Dict, List
+import tempfile
+import uuid
 import subprocess
 import re
 import os
@@ -134,57 +135,61 @@ def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
 
         This function synthesizes the MIDI file into a temporary WAV file
         using FluidSynth and the provided SF2 SoundFont. It then converts the
-        WAV file to MP3, automatically trimming any leading or trailing silence
-        that FluidSynth might have added.
+        WAV file to MP3, automatically trimming any leading or trailing silence.
 
         :param str mid_file: The path to the input MIDI file.
         :param str sf2_file: The path to the SoundFont (.sf2) file.
         :param str output_file: The path to save the resulting MP3 file,
                             defaults to 'output.mp3'.
         :raises AssertionError: If the `mid_file` or `sf2_file` is not found.
-        :raises FileNotFoundError: If ffmpeg is not found in the system path.
+        :raises FileNotFoundError: If `ffmpeg` or `fluidsynth` is not found in the system PATH.
+        :raises subprocess.CalledProcessError: If the `fluidsynth` command fails.
         :returns: None. The function saves the output directly to a file.
         :rtype: None
     """
-    assert os.path.isfile(mid_file), 'Mid file not found'
-    assert os.path.isfile(sf2_file), 'sf2 file not found'
+    assert os.path.isfile(mid_file), f'MIDI file not found: {mid_file}'
+    assert os.path.isfile(sf2_file), f'SoundFont file not found: {sf2_file}'
 
-    # Finds ffmpeg in the system path
-    ffmpeg_path = which('ffmpeg')
-    if ffmpeg_path is None:
-        raise FileNotFoundError('ffmpeg not found in system path')
-    AudioSegment.converter = ffmpeg_path
+    if which('ffmpeg') is None:
+        raise FileNotFoundError('ffmpeg not found. Please install it and ensure it is in your system PATH.')
 
-    # Create temporary wav file
-    tmp_wav = 'tmp.wav'
-    subprocess.run(['fluidsynth', '-qni', sf2_file, mid_file, '-F', tmp_wav])
+    if which('fluidsynth') is None:
+        raise FileNotFoundError('fluidsynth not found. Please install it and ensure it is in your system PATH.')
 
-    # Convert wav to mp3
-    audio = AudioSegment.from_wav(tmp_wav)
+    # Manually create a unique temporary file path
+    tmp_wav_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
 
-    # TODO:
-    # FluidSynth created long periods of silence after the notes of the mid file have finished playing
-    # I cannot figure out why this is happening but I will just remove it during the conversion to mp3
+    try:
+        # Synthesize MIDI to the temporary WAV file
+        subprocess.run(
+            ['fluidsynth', '-qni', sf2_file, mid_file, '-F', tmp_wav_path],
+            check=True
+        )
 
-    # Parameters for silence detection
-    # Silence threshold in dBFS
-    silence_thresh = audio.dBFS - 14
-    # Minimum silence duration in milliseconds
-    min_silence_len = 500
+        audio = AudioSegment.from_wav(tmp_wav_path)
 
-    # Split the audio based on silence
-    segments = split_on_silence(audio, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
+        # Silence trimming logic remains the same
+        silence_thresh = audio.dBFS - 30
+        start_trim = 0
+        for i, chunk in enumerate(audio):
+            if chunk.dBFS > silence_thresh:
+                start_trim = i
+                break
 
-    # Join all non-silent segments
-    trimmed_audio = segments[0]  # Start with the first segment
+        end_trim = len(audio)
+        for i, chunk in enumerate(audio.reverse()):
+            if chunk.dBFS > silence_thresh:
+                end_trim = len(audio) - i
+                break
 
-    for segment in segments[1:]:
-        trimmed_audio += segment  # Concatenate the segments back together
+        trimmed_audio = audio[start_trim:end_trim]
 
-    trimmed_audio.export(output_file, format='mp3')
+        trimmed_audio.export(output_file, format='mp3')
 
-    # Delete tmp wav file
-    os.remove(tmp_wav)
+    finally:
+        if os.path.exists(tmp_wav_path):
+            os.remove(tmp_wav_path)
+
 
 
 def chord2tokens(chord: str) -> list:

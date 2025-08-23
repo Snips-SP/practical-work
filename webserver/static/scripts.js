@@ -6,7 +6,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const skipButton = document.getElementById('skip-button');
     const volumeSlider = document.getElementById('volume-slider');
     const loadingSpinner = document.getElementById('loading-spinner');
-    const textbox = document.getElementById('textbox');
     const currentTimeDisplay = document.getElementById('currentTime');
     const totalTimeDisplay = document.getElementById('totalTime');
     const bpmSlider = document.getElementById('bpm-slider');
@@ -29,7 +28,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const topPInput = document.getElementById('top-p-input');
 
     let selectedModel = null;
-    let allModels = []; // Store all available models
+    // Store all available models
+    let allModels = [];
     audioPlayer.loop = true;
 
     // --- Player Controls & UI ---
@@ -41,8 +41,8 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
-    audioPlayer.addEventListener('play', () => playButton.textContent = '❚❚');
-    audioPlayer.addEventListener('pause', () => playButton.textContent = '▶');
+    audioPlayer.addEventListener('play', () => playButton.textContent = '||');
+    audioPlayer.addEventListener('pause', () => playButton.textContent = '>');
     skipButton.addEventListener('click', () => audioPlayer.currentTime += 10);
     volumeSlider.addEventListener('input', () => audioPlayer.volume = volumeSlider.value);
     bpmSlider.addEventListener('input', () => bpmDisplay.textContent = bpmSlider.value);
@@ -54,6 +54,10 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     audioPlayer.addEventListener('loadedmetadata', () => totalTimeDisplay.textContent = formatTime(audioPlayer.duration));
+    // TODO: Fix the audioPlayer duration bug
+    // Currently audioPlayer.duration is always a smaller number than the actual song duration
+    // I remember fixing this bug before the redo of the frontend, but I can't remember how I did it
+    audioPlayer.addEventListener('loadedmetadata', () => console.log(audioPlayer.duration));
     audioPlayer.addEventListener('timeupdate', () => currentTimeDisplay.textContent = formatTime(audioPlayer.currentTime));
 
     moreOptionsBtn.addEventListener('click', () => {
@@ -75,7 +79,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function selectModel(model) {
         selectedModel = model;
-        console.log('Selected model:', model);
         modelDropdownButton.textContent = model.name;
         modelDropdownMenu.classList.add('hidden');
     }
@@ -107,14 +110,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- playSong function to fetch and use metadata ---
     function playSong(song) {
-        fetch(`/play-song?song=${encodeURIComponent(song)}`)
+        // Fetch the song's metadata and play it
+        fetch(`/play-song?filename=${encodeURIComponent(song.path)}`)
             .then(response => response.json())
             .then(data => {
                 if (data.audio_url && data.metadata_url) {
                     // Load the audio
                     audioPlayer.src = data.audio_url;
                     audioPlayer.play();
-                    textbox.textContent = song;
+                    // Wait for the json to get the name of the song
                     dropdownMenu.classList.add('hidden');
 
                     // Fetch and apply the metadata
@@ -123,7 +127,9 @@ document.addEventListener('DOMContentLoaded', function () {
                         .then(metadata => {
                             loadStateFromMetadata(metadata);
                         })
-                        .catch(err => console.error("Failed to load metadata:", err));
+                        .catch(err => console.error('Failed to load metadata:', err));
+                } else {
+                    console.error('Did not receive audio_url or metadata_url from server:', data);
                 }
             })
             .catch(error => console.error('Error playing song:', error));
@@ -226,10 +232,8 @@ document.addEventListener('DOMContentLoaded', function () {
         })
         .then(response => response.json())
         .then(data => {
-            if (data.audio_url) {
-                audioPlayer.src = data.audio_url;
-                audioPlayer.play();
-                textbox.textContent = data.song_name;
+            if (data.song) {
+                playSong(data.song)
             }
             if (data.error){
                 alert(`An error occurred: ${data.error}`);

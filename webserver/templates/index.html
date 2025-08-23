@@ -8,7 +8,7 @@
     <style>
         /* Custom accent color for range inputs */
         input[type="range"] {
-            accent-color: #38bdf8; /* A nice sky blue color */
+            accent-color: #38bdf8;
         }
     </style>
 </head>
@@ -32,7 +32,7 @@
 
         <div class="w-full max-w-md mb-4">
             <label for="song-name-input" class="text-sm text-slate-400 mb-2 block">Song Name</label>
-            <input type="text" id="song-name-input" placeholder="My Awesome Jam..." class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
+            <input type="text" id="song-name-input" placeholder="Enter a name..." class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
         </div>
 
         <div class="w-full mb-6">
@@ -74,12 +74,11 @@
             <audio id="audio-player"></audio>
             <div class="controls flex flex-col gap-4">
                 <div class="flex justify-between items-center">
-                    <button id="play-button" class="text-4xl">▶</button>
+                    <button id="play-button" class="text-4xl">></button>
                     <div class="volume-wrapper flex items-center gap-3">
-                         <span class="text-xs">VOL</span>
                          <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1" class="w-24 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer">
                     </div>
-                    <button id="skip-button" class="text-2xl">»|</button>
+                    <button id="skip-button" class="text-2xl">>></button>
                 </div>
                 <div class="flex justify-between text-xs text-slate-400 font-mono">
                     <span id="currentTime">0:00</span>
@@ -89,7 +88,7 @@
         </div>
     </div>
 
-    <pre id="ascii-visualizer" class="fixed bottom-0 left-0 right-0 h-40 bg-slate-900/80 backdrop-blur-sm text-center font-mono whitespace-pre overflow-hidden text-sky-400 p-2"></pre>
+    <pre id="ascii-visualizer" class="fixed inset-0 font-mono whitespace-pre overflow-hidden text-sky-400 p-2 flex items-end justify-center pointer-events-none"></pre>
 
     <script src="static/visualizer.js"></script>
     <script src="static/chord_editor.js"></script>
