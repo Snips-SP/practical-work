@@ -25,6 +25,40 @@ document.addEventListener('DOMContentLoaded', () => {
         const qualityPart = rawValue.substring(matchedRoot.length);
         return chordQualities.includes(qualityPart);
     };
+    const durationToBarCount = (duration) => {
+        let barCount;
+        let barText;
+        if (duration === 4) {
+          barText = '1/4 Bars';
+        } else if (duration === 8) {
+          barText = '1/2 Bars';
+        } else if (duration >= 16) {
+          barCount = Math.floor(duration / 16);
+          barText = barCount === 1 ? `${barCount} Bar` : `${barCount} Bars`;
+        }
+        return barText;
+    };
+    const durationToRem = (duration) => {
+        const baseRem = 16;
+        let widthRem = baseRem;
+
+        if (duration > 16) {
+            // Scaling for durations longer than 16
+            let n = duration / 16;
+            for (let i = 2; i <= n; i++) {
+                // The increment is based on a fraction (1/4) of the base width,
+                // and it decreases more gradually (1/2, 1/3, 1/4) for each additional bar.
+                widthRem += (baseRem / 4) / (i - 1);
+            }
+        } else if (duration < 16) {
+            // Scaling for durations shorter than 16
+            let n = 16 / duration;
+            for (let i = 2; i <= n; i++) {
+                widthRem -= (baseRem / 4) / (i - 1);
+            }
+        }
+        return `${widthRem}rem`;
+    };
 
     const autocompleteList = document.createElement('ul');
     autocompleteList.className = 'absolute bg-slate-700 border border-slate-500 rounded-md shadow-lg z-50 max-h-48 overflow-y-auto hidden';
@@ -55,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const box = document.createElement('div');
         box.className = 'chord-box relative group bg-slate-800 border border-slate-600 rounded-lg p-4 h-32 flex flex-col justify-between transition-all duration-300';
         box.dataset.duration = duration;
-        box.style.width = `${(8 * duration) / 16}rem`;
+        box.style.width = durationToRem(duration);
 
         const input = document.createElement('input');
         input.type = 'text';
@@ -72,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const durationDisplay = document.createElement('span');
         durationDisplay.className = 'duration-display font-mono w-12 text-center';
-        durationDisplay.textContent = `${duration}`;
+        durationDisplay.textContent = durationToBarCount(duration);
 
         const extendBtn = document.createElement('button');
         extendBtn.textContent = '+';
@@ -97,20 +131,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const updateDuration = (newDuration) => {
             box.dataset.duration = newDuration;
-            box.querySelector('.duration-display').textContent = `${newDuration}n`;
-            box.style.width = `${(8 * newDuration) / 16}rem`;
+            box.querySelector('.duration-display').textContent = durationToBarCount(newDuration);
+            box.style.width = durationToRem(newDuration);
             updateUI();
         };
 
         box.querySelector('.extend-btn').onclick = () => {
-            const newDuration = parseInt(box.dataset.duration, 10) + 16;
-            updateDuration(newDuration);
+            const duration = parseInt(box.dataset.duration, 10);
+            if (duration < 8) {
+                updateDuration(duration + 4);
+            } else if (duration < 16) {
+                updateDuration(duration + 8);
+            } else {
+                updateDuration(duration + 16);
+            }
         };
 
         box.querySelector('.shrink-btn').onclick = () => {
             const currentDuration = parseInt(box.dataset.duration, 10);
             if (currentDuration > 16) {
                 updateDuration(currentDuration - 16);
+            } else if (currentDuration > 8) {
+                updateDuration(currentDuration - 8);
+            } else if (currentDuration > 4) {
+                updateDuration(currentDuration - 4);
             }
         };
     };
@@ -120,8 +164,8 @@ document.addEventListener('DOMContentLoaded', () => {
         boxes.forEach((box) => {
             const duration = parseInt(box.dataset.duration, 10);
             const shrinkBtn = box.querySelector('.shrink-btn');
-            shrinkBtn.disabled = duration <= 16;
-            shrinkBtn.style.opacity = duration <= 16 ? '0.3' : '1';
+            shrinkBtn.disabled = duration <= 4;
+            shrinkBtn.style.opacity = duration <= 4 ? '0.3' : '1';
         });
     };
 
