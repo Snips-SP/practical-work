@@ -83,7 +83,7 @@ def train(num_epochs: int,
     start_epoch = 0
     # Search checkpoint file and load it
     if continue_from is not None:
-        continue_from = os.path.join(root_path, continue_from)
+        continue_from = os.path.join(root_path, 'runs', continue_from)
         model, optimizer, start_epoch, global_step = load_latest_checkpoint(continue_from,
                                                                             device=device,
                                                                             optimizer_class=AdamW,
@@ -325,9 +325,13 @@ def run_trainings_from_code():
     modulation = 0
 
     # Train with same parameters but different configs
-    for name, config in [('GPT2_Medium', config3), ('GPT2_Small', config2), ('GPT2_Tiny', config1)]:
+    for name, config, continue_from_path in [
+        ('GPT2_Medium', config3, 'GPT2_Medium_1'),
+        ('GPT2_Small', config2, 'GPT2_Small_1'),
+        ('GPT2_Tiny', config1, 'GPT2_Tiny_1')
+    ]:
         if name == 'GPT2_Medium':
-            batch_size = 8
+            batch_size = 4
         else:
             batch_size = 16
         train(num_epochs=num_epochs,
@@ -337,7 +341,7 @@ def run_trainings_from_code():
               gradient_checkpointing=gradient_checkpointing,
               RAM_dataset=RAM_dataset,
               device=device,
-              continue_from=None,
+              continue_from=continue_from_path,
               model_name=name,
               modulation=modulation,
               config=config)

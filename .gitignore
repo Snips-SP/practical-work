@@ -16,3 +16,5 @@
 /webserver/static/music/
 
 /webserver/backend/ml_model/genre_charts/
+/webserver/backend/ml_model/runs/
+

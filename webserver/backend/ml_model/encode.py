@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from backend.ml_model.helper import EncodingConfig
 import pypianoroll
 from tqdm import tqdm
@@ -12,6 +14,24 @@ import os
 import argparse
 
 EncodingConfig.initialize()
+
+
+def get_split_files(sample_keys, all_groups, endings):
+    """
+    For a given list of sample keys, collects the corresponding files
+    that have the desired modulation endings.
+    """
+    final_files = []
+    for key in sample_keys:
+        # Get all files available for this sample
+        all_mod_files = all_groups[key]
+        # Filter them to keep only the ones we want
+        filtered_files = [
+            f for f in all_mod_files
+            if any(f.endswith(ending) for ending in endings)
+        ]
+        final_files.extend(filtered_files)
+    return final_files
 
 
 def process_files_worker(files_to_process: List[str], results_queue: mp.Queue, sequence_length: int):
@@ -60,7 +80,7 @@ def save_chunks_writer(output_path: str, results_queue: mp.Queue, total_sequence
     all_chunks = []
     num_files_saved = 0
 
-    pbar = tqdm(total=total_sequences_approx, desc='Chunking and saving files (3/3)')
+    pbar = tqdm(total=total_sequences_approx, desc=f'Chunking and saving files for {os.path.basename(output_path)}')
 
     while True:
         worker_batch = results_queue.get()
@@ -82,7 +102,7 @@ def save_chunks_writer(output_path: str, results_queue: mp.Queue, total_sequence
 
     # Save the final, smaller chunk that remains
     if all_chunks:
-        print(f"\nSaving final chunk with {len(all_chunks)} sequences...")
+        print(f'\nSaving final chunk with {len(all_chunks)} sequences...')
         data_to_save = np.array(all_chunks)
         np.savez_compressed(
             os.path.join(output_path, f'{num_files_saved:03d}.npz'),
@@ -329,7 +349,8 @@ def encode_dataset(
     pianoroll_files = list(glob.glob(dataset_path))
 
     if encode_from_tmp:
-        print('Skipping encoding stage. (1/3)')
+        print('Skipping getting an average pitch value over the entire dataset. (1/3)')
+        print('Skipping encode midi files as token encoding. (2/3)')
     else:
         if os.path.exists(os.path.join(dataset, f'trc_avg.pkl')):
             print('Get average pitch value per track over entire dataset from file. (1/3)')
@@ -383,69 +404,105 @@ def encode_dataset(
                 for _ in p.imap_unordered(runner.safe_run, pianoroll_files):
                     t.update(1)
 
-    print(f'Starting chunking stage with {num_workers} worker processes.')
+    # Make folder structure
+    output_folder = f'{output}_da_{da}'
+    train_folder = os.path.join(f'{output}_da_{da}', 'train')
+    valid_folder = os.path.join(f'{output}_da_{da}', 'valid')
+    test_folder = os.path.join(f'{output}_da_{da}', 'test')
+    for folder in [output_folder, train_folder, valid_folder, test_folder]:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
 
-    output = f'{output}_da_{da}'
-    # Check if the directory exists
-    if not os.path.exists(output):
-        # Create the directory
-        os.makedirs(output)
+    print('Finding and grouping files by sample...')
+    all_tmp_files = glob.glob(os.path.join(dataset, 'lpd_5_cleansed/*/*/*/*/*.npz.*.tmp'))
 
-    # Always get the 0 modulated encoded file and da random ones as well
+    # A dictionary to hold lists of files
+    sample_groups = defaultdict(list)
+    for f in all_tmp_files:
+        # Extract the base name to identify the unique sample
+        base_name = f.split('.npz.')[0] + '.npz'
+        sample_groups[base_name].append(f)
+
+    print(f'Found {len(sample_groups)} unique samples.')
+
+    # Split the list of unique samples into train, valid, and test
+    unique_samples = list(sample_groups.keys())
+    np.random.shuffle(unique_samples)  # Shuffle for a random split
+
+    # Calculate split indices for an 80/10/10 split
+    n_samples = len(unique_samples)
+    train_end = int(0.8 * n_samples)
+    valid_end = int(0.9 * n_samples)
+
+    # Assign the unique sample keys to each split
+    train_sample_keys = unique_samples[:train_end]
+    valid_sample_keys = unique_samples[train_end:valid_end]
+    test_sample_keys = unique_samples[valid_end:]
+
+    print(f'Splitting samples: {len(train_sample_keys)} train, {len(valid_sample_keys)} validation, {len(test_sample_keys)} test.')
+
+    # Build the final file lists with the desired modulations
+    # Define which modulations to use based on the da parameter
     possible_shifts = list(range(-5, 0)) + list(range(1, 7))
     np.random.shuffle(possible_shifts)
 
     shifts_to_use = [0] + possible_shifts[:da]
-    # Create the set of desired file endings
-    desired_endings = {f'.{s}.tmp' for s in shifts_to_use}
+    desired_endings = {f'.npz.{s}.tmp' for s in shifts_to_use}
+    print(f'Including original (0) and {da} other modulations: {shifts_to_use}')
 
-    all_tmp_files = glob.glob(os.path.join(dataset, 'lpd_5_cleansed/*/*/*/*/*.npz.*.tmp'))
+    # Create the final lists of file paths for each split
+    train_files = get_split_files(train_sample_keys, sample_groups, desired_endings)
+    valid_files = get_split_files(valid_sample_keys, sample_groups, desired_endings)
+    test_files = get_split_files(test_sample_keys, sample_groups, desired_endings)
 
-    # Filter the list
-    encoded_files = [
-        f for f in all_tmp_files
-        if any(f.endswith(ending) for ending in desired_endings)
-    ]
+    print('\n--- Final Split ---')
+    print(f'Training files:   {len(train_files)}')
+    print(f'Validation files: {len(valid_files)}')
+    print(f'Test files:       {len(test_files)}\n')
 
-    results_queue = mp.Queue()
-    # A signal to tell the writer when all workers are done
-    sentile = None
+    # Chunk all those files into their folders
+    print(f'Starting chunking stage with {num_workers} worker processes. (3/3)')
 
-    # Split the list of files among the worker processes
-    file_chunks = np.array_split(encoded_files, num_workers)
+    for output_folder, files in zip([train_folder, valid_folder, test_folder], [train_files, valid_files, test_files]):
+        results_queue = mp.Queue()
+        # A signal to tell the writer when all workers are done
+        sentile = None
 
-    # Create and start the single writer process
-    writer_process = mp.Process(
-        target=save_chunks_writer,   # An approximation of the number of sequences
-        args=(output, results_queue, 300_000 * (da+1), chunk_size, sentile)
-    )
-    writer_process.start()
+        # Split the list of files among the worker processes
+        file_chunks = np.array_split(files, num_workers)
 
-    # Create and start the worker processes
-    worker_processes = []
-    for i in range(num_workers):
-        p = mp.Process(
-            target=process_files_worker,
-            args=(file_chunks[i].tolist(), results_queue, sequence_length)
+        # Create and start the single writer process
+        writer_process = mp.Process(
+            target=save_chunks_writer,  # An approximation of the number of sequences
+            args=(output_folder, results_queue, len(files), chunk_size, sentile)
         )
-        worker_processes.append(p)
-        p.start()
+        writer_process.start()
 
-    # Wait for all workers to finish their file processing
-    for p in worker_processes:
-        p.join()
+        # Create and start the worker processes
+        worker_processes = []
+        for i in range(num_workers):
+            p = mp.Process(
+                target=process_files_worker,
+                args=(file_chunks[i].tolist(), results_queue, sequence_length)
+            )
+            worker_processes.append(p)
+            p.start()
 
-    # Once all workers are done, send the sentinel to tell the writer to stop
-    results_queue.put(sentile)
+        # Wait for all workers to finish their file processing
+        for p in worker_processes:
+            p.join()
 
-    # Wait for the writer process to finish saving everything
-    writer_process.join()
+        # Once all workers are done, send the sentinel to tell the writer to stop
+        results_queue.put(sentile)
+
+        # Wait for the writer process to finish saving everything
+        writer_process.join()
 
     # Save the ordering of the tracks
-    with open(os.path.join(output, 'tracks.trc'), 'w') as f:
+    with open(os.path.join(output_folder, 'tracks.trc'), 'w') as f:
         f.write(','.join([EncodingConfig.encoding_order[t] for t in EncodingConfig.trc_idx]))
 
-    print('Dataset encoding finished successfully.')
+    print('\nDataset encoding finished successfully.')
 
 
 if __name__ == '__main__':
