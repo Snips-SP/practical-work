@@ -1,45 +1,80 @@
-document.addEventListener("DOMContentLoaded", function () {
-    const audio = document.getElementById("audio-player");
-    const visualizer = document.getElementById("ascii-visualizer");
+document.addEventListener('DOMContentLoaded', function () {
+    const audio = document.getElementById('audio-player');
+    const visualizer = document.getElementById('ascii-visualizer');
+
+    if (!audio || !visualizer) {
+        console.error('Audio player or visualizer element not found.');
+        return;
+    }
 
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = audioContext.createAnalyser();
+    // Results in 64 frequency bins
     analyser.fftSize = 128;
 
     const source = audioContext.createMediaElementSource(audio);
     source.connect(analyser);
     analyser.connect(audioContext.destination);
 
-    let dataArray = new Uint8Array(analyser.frequencyBinCount);
-    let maxHeight = 10; // Max height of bars
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    // Max height of bars in characters
+    const maxHeight = 10;
+    // Will hold the calculated width of a single character
+    let charWidth = 0;
 
+    // Dynamically calculates the width of a single monospace character by rendering a temporary element and measuring it.
+    function calculateCharWidth() {
+        const tempSpan = document.createElement('span');
+        // Use styles to make it invisible and not affect layout
+        tempSpan.style.visibility = 'hidden';
+        tempSpan.style.position = 'absolute';
+        // A sample character
+        tempSpan.textContent = '#';
+
+        visualizer.appendChild(tempSpan);
+        // Use measured width, with a fallback
+        charWidth = tempSpan.offsetWidth || 7;
+        visualizer.removeChild(tempSpan);
+    }
+
+    //Calculates the maximum number of characters that can fit in the visualizer.
     function calculateMaxBars() {
-        return Math.floor(window.innerWidth / 7.1); // Smaller divisor = more bars
+        // A safe default if width isn't calculated yet
+        if (charWidth === 0) return 80;
+        // Use the visualizer's width
+        return Math.floor(visualizer.clientWidth / charWidth);
     }
 
     function getAsciiBars(dataArray) {
-        let maxBars = calculateMaxBars();
-        let halfBars = Math.floor(maxBars / 2); // Half for left, half for right
-        let bars = Array(halfBars).fill(0);
+        const totalBars = calculateMaxBars();
+        if (totalBars <= 0) return '';
 
-        // Distribute frequency data evenly
-        for (let i = 0; i < halfBars; i++) {
-            const value = dataArray[Math.floor(i * (dataArray.length / halfBars))] / 255;
+        const leftBarCount = Math.floor(totalBars / 2);
+        const bars = Array(leftBarCount).fill(0);
+
+        // Map the frequency data to the number of bars available for the left side
+        for (let i = 0; i < leftBarCount; i++) {
+            const percent = i / leftBarCount;
+            const dataIndex = Math.floor(percent * dataArray.length);
+            const value = dataArray[dataIndex] / 255; // Normalize to 0-1
             bars[i] = Math.round(value * maxHeight);
         }
 
-        let asciiOutput = "";
+        let asciiOutput = '';
         for (let row = maxHeight; row >= 0; row--) {
-            let leftPart = "";
-            let rightPart = "";
-
-            for (let col = 0; col < halfBars; col++) {
-                leftPart += bars[col] > row ? "#" : " ";
+            let leftPart = '';
+            for (let col = 0; col < leftBarCount; col++) {
+                leftPart += bars[col] > row ? '#' : ' ';
             }
 
-            rightPart = leftPart.split("").reverse().join(""); // Mirroring the left side
+            // Create the right part by reversing the left, ensuring it fits the total width
+            let rightPart = leftPart.split('').reverse().join('');
+            // If total is odd, the middle bar is duplicated
+            if (totalBars % 2 !== 0) {
+                rightPart = rightPart.slice(1);
+            }
 
-            asciiOutput += leftPart + rightPart + "\n"; // No gap in between!
+            asciiOutput += leftPart + rightPart + '\n';
         }
 
         return asciiOutput;
@@ -51,12 +86,22 @@ document.addEventListener("DOMContentLoaded", function () {
         requestAnimationFrame(updateVisualizer);
     }
 
-    window.addEventListener("resize", () => {
+    window.addEventListener('resize', () => {
+        // Recalculate dimensions when the window size changes
+        calculateCharWidth();
+        // Redraw immediately to prevent lag
+        analyser.getByteFrequencyData(dataArray);
         visualizer.textContent = getAsciiBars(dataArray);
     });
 
     audio.onplay = () => {
-        audioContext.resume();
+        // The AudioContext must be resumed by a user gesture
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
         updateVisualizer();
     };
+
+    // Perform initial calculations once the DOM is ready
+    calculateCharWidth();
 });

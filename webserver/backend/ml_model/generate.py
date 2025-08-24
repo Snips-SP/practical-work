@@ -130,9 +130,12 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     pianoroll = np.zeros((len(EncodingConfig.encoding_order), total_steps * step, 128))
 
     current_tick = 0
+    i = 0
     # Decode it again
     with torch.no_grad(), trange(total_steps) as progress_bar:
-        while True:
+        # Prevent infinite loop
+        while i <= 10_000:
+            i += 1
             # If the queue is empty, create new tokens
             if not generated_sequence_cache:
                 new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p)
@@ -215,6 +218,9 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                 else:
                     # It is either padding or and end note
                     continue
+
+    if i >= 10_000:
+        print(f'Maximum number of iterations reached. Terminated.')
 
     # MIDI conversion
     pr = []

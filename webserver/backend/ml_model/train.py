@@ -80,7 +80,7 @@ def train(num_epochs: int,
         'lr': learning_rate
     }
 
-    start_epoch = 0
+    start_epoch = 1
     # Search checkpoint file and load it
     if continue_from is not None:
         continue_from = os.path.join(root_path, 'runs', continue_from)
