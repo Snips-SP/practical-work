@@ -1,4 +1,4 @@
-from transformers import GPT2Config, GPT2LMHeadModel
+from transformers import PhiConfig, PhiForCausalLM
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
@@ -191,7 +191,6 @@ def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
             os.remove(tmp_wav_path)
 
 
-
 def chord2tokens(chord: str) -> list:
     """Encodes a chord into a list of tokens.
 
@@ -252,12 +251,14 @@ def chord2tokens(chord: str) -> list:
         return [basenote]
 
 
-def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: str = 'cpu', optimizer_class=None,
-                           **optimizer_kwargs):
+def load_latest_checkpoint(
+        directory: str, name: str = 'checkpoint_', device: str = 'cpu',
+        optimizer_class=None, learning_rate_scheduler_class=None
+):
     """Load the latest checkpoint from a directory based on epoch number.
 
         This function searches for checkpoint files matching the pattern '{name}{epoch}.ph'
-        and loads the one with the highest epoch number. It reconstructs the GPT2 model
+        and loads the one with the highest epoch number. It reconstructs the Phi-2 model
         from the saved config, creates an optimizer with the specified class and parameters,
         and loads all saved states.
 
@@ -267,7 +268,10 @@ def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: st
         :param optimizer_class: Optimizer class to instantiate (e.g., torch.optim.AdamW, torch.optim.Adam). If None, no optimizer is created.
         :type optimizer_class: torch.optim.Optimizer or None
         :param optimizer_kwargs: Keyword arguments passed to the optimizer constructor (e.g., lr=0.001, weight_decay=0.01, betas=(0.9, 0.999)).
-        :returns: A tuple containing (model, optimizer, start_epoch, global_step) if checkpoint found, where model is GPT2LMHeadModel with loaded weights, optimizer is the optimizer instance with loaded state (or None if optimizer_class is None), start_epoch is the next epoch number to start training from, and global_step is the global step counter for continuous logging. Returns None if no valid checkpoint is found.
+        :returns: A tuple containing (model, optimizer, start_epoch, global_step) if checkpoint found,
+         where model is Phi-2LMHeadModel with loaded weights, optimizer is the optimizer instance with loaded state (or None if optimizer_class is None),
+          start_epoch is the next epoch number to start training from, and global_step is the global step counter for continuous logging.
+          Returns None if no valid checkpoint is found.
         :rtype: tuple or None
         :raises FileNotFoundError: If checkpoint exists but doesn't contain valid config.
         :raises ValueError: If checkpoint file is corrupted or missing required keys.
@@ -275,12 +279,10 @@ def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: st
 
     # Validate inputs
     if not os.path.exists(directory):
-        print(f'Warning: Directory {directory} does not exist')
-        return None
+        raise FileNotFoundError(f'Directory not found: {directory}')
 
     if not os.path.isdir(directory):
-        print(f'Warning: {directory} is not a directory')
-        return None
+        raise NotADirectoryError(f'Not a directory: {directory}')
 
     # Define regex pattern to extract epoch number from filename
     # Pattern matches: {name}{digits}.pth
@@ -288,87 +290,130 @@ def load_latest_checkpoint(directory: str, name: str = 'checkpoint_', device: st
 
     latest_epoch = -1
     latest_file = None
+    # Search for checkpoint files and find the one with highest epoch number
+    for filename in os.listdir(directory):
+        match = pattern.match(filename)
+        if match:
+            epoch = int(match.group(1))
+            if epoch > latest_epoch:
+                latest_epoch = epoch
+                latest_file = filename
+
+    # If no checkpoint found
+    if latest_file is None:
+        raise FileNotFoundError(f'No checkpoint files matching pattern {name}*.pth found in {directory}')
+
+    # Load the latest checkpoint
+    checkpoint_path = os.path.join(directory, latest_file)
+    print(f'Loading checkpoint: {checkpoint_path}')
 
     try:
-        # Search for checkpoint files and find the one with highest epoch number
-        for filename in os.listdir(directory):
-            match = pattern.match(filename)
-            if match:
-                epoch = int(match.group(1))
-                if epoch > latest_epoch:
-                    latest_epoch = epoch
-                    latest_file = filename
-
-        # If no checkpoint found
-        if latest_file is None:
-            raise FileNotFoundError(f'No checkpoint files matching pattern {name}*.pth found in {directory}')
-
-        # Load the latest checkpoint
-        checkpoint_path = os.path.join(directory, latest_file)
-        print(f'Loading checkpoint: {checkpoint_path}')
-
-        try:
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        except Exception as e:
-            raise ValueError(f'Failed to load checkpoint file {checkpoint_path}: {e}')
-
-        # Validate checkpoint structure
-        required_keys = ['model_state_dict', 'epoch', 'global_step', 'config']
-        missing_keys = [key for key in required_keys if key not in checkpoint]
-        if missing_keys:
-            raise ValueError(f'Checkpoint missing required keys: {missing_keys}')
-
-        # Reconstruct from config
-        try:
-            config = GPT2Config(**checkpoint['config'])
-        except Exception as e:
-            raise ValueError(f'Failed to create GPT2Config from saved config: {e}')
-
-        # Create model from config
-        try:
-            model = GPT2LMHeadModel(config)
-            model.to(device)
-        except Exception as e:
-            raise ValueError(f'Failed to create GPT2LMHeadModel from config: {e}')
-
-        # Load model weights
-        try:
-            model.load_state_dict(checkpoint['model_state_dict'])
-        except Exception as e:
-            raise ValueError(f'Failed to load model weights: {e}')
-
-        # Create optimizer if class is provided
-        optimizer = None
-        if optimizer_class is not None:
-            try:
-                optimizer = optimizer_class(model.parameters(), **optimizer_kwargs)
-            except Exception as e:
-                raise ValueError(f'Failed to create optimizer: {e}')
-
-            # Load optimizer state if available
-            if 'optimizer_state_dict' in checkpoint:
-                try:
-                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                except Exception as e:
-                    raise ValueError(f'Failed to load optimizer state dict optimizer: {e}')
-
-            # Move optimizer state to the correct device
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.to(device)
-
-        # Extract training progress info
-        start_epoch = checkpoint.get('epoch', 0) + 1
-        global_step = checkpoint.get('global_step', 0)
-
-        print(f'Successfully loaded checkpoint from epoch {checkpoint["epoch"]}')
-
-        return model, optimizer, start_epoch, global_step
-
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
     except Exception as e:
-        print(f'Error loading checkpoint: {e}')
-        raise
+        raise ValueError(f'Failed to load checkpoint file {checkpoint_path}: {e}')
+
+    # Validate checkpoint structure
+    required_keys = ['model_state_dict', 'config']
+    missing_keys = [key for key in required_keys if key not in checkpoint]
+    if missing_keys:
+        raise ValueError(f'Checkpoint missing required keys: {missing_keys}')
+
+    # =========================
+    # = Create and load model =
+    # =========================
+    try:
+        config = PhiConfig(**checkpoint['config'])
+    except Exception as e:
+        raise ValueError(f'Failed to create Phi-2Config from saved config: {e}')
+
+    # Create model from config
+    try:
+        model = PhiForCausalLM(config)
+        model.to(device)
+    except Exception as e:
+        raise ValueError(f'Failed to create PhiForCausalLM from config: {e}')
+
+    # Load model weights
+    try:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    except Exception as e:
+        raise ValueError(f'Failed to load model weights: {e}')
+
+    # =============================
+    # = Create and load optimizer =
+    # =============================
+    optimizer = None
+    optimizer_kwargs = None
+    if optimizer_class is not None and 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_kwargs'] is not None:
+        try:
+            optimizer_kwargs = checkpoint['optimizer_kwargs']
+            optimizer = optimizer_class(model.parameters(), **optimizer_kwargs)
+        except Exception as e:
+            raise ValueError(f'Failed to create optimizer: {e}')
+
+        # Load optimizer state if available
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        except Exception as e:
+            raise ValueError(f'Failed to load optimizer state dict optimizer: {e}')
+
+        # Move optimizer state to the correct device
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
+
+    # ================================
+    # = Create and load lr scheduler =
+    # ================================
+    learning_rate_scheduler = None
+    learning_rate_scheduler_kwargs = None
+    if learning_rate_scheduler_class is not None and 'learning_rate_scheduler_state_dict' in checkpoint and checkpoint['learning_rate_scheduler_kwargs'] is not None:
+        try:
+            learning_rate_scheduler_kwargs = checkpoint['learning_rate_scheduler_kwargs']
+            learning_rate_scheduler = learning_rate_scheduler_class(optimizer=optimizer,  **learning_rate_scheduler_kwargs)
+        except Exception as e:
+            raise ValueError(f'Failed to create learning rate scheduler: {e}')
+
+        try:
+            learning_rate_scheduler.load_state_dict(checkpoint['learning_rate_scheduler_state_dict'])
+        except Exception as e:
+            raise ValueError(f'Failed to load learning rate scheduler state dict: {e}')
+
+    # ==================================
+    # = Extract training progress info =
+    # ==================================
+    if 'training_loss_per_epoch' in checkpoint:
+        training_loss_per_epoch = checkpoint['training_loss_per_epoch']
+    else:
+        training_loss_per_epoch = None
+        print(f'Warning: "training_loss_per_epoch" key not found in checkpoint.')
+
+    if 'validation_loss_per_epoch' in checkpoint:
+        validation_loss_per_epoch = checkpoint['validation_loss_per_epoch']
+    else:
+        validation_loss_per_epoch = None
+        print(f'Warning: "validation_loss_per_epoch" key not found in checkpoint.')
+
+    if 'patience' in checkpoint:
+        patience_dict = checkpoint['patience']
+    else:
+        patience_dict = None
+        print(f'Warning: "patience_tuple" key not found in checkpoint.')
+
+    if 'epoch' in checkpoint:
+        start_epoch = checkpoint['epoch'] + 1
+    else:
+        start_epoch = None
+        print(f'Warning: "epoch" key not found in checkpoint.')
+
+    if 'global_step' in checkpoint:
+        global_step = checkpoint['global_step']
+    else:
+        global_step = None
+        print(f'Warning: "global_step" key not found in checkpoint.')
+
+    return model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, learning_rate_scheduler, learning_rate_scheduler_kwargs
 
 
 def get_device(preferred: str = None) -> str:

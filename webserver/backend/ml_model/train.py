@@ -1,6 +1,6 @@
 from backend.ml_model.helper import get_device, load_latest_checkpoint, get_next_run_folder, EncodingConfig
-from backend.ml_model.dataloader import GPT2Dataset, GPT2RAMDataset
-from transformers import GPT2LMHeadModel, GPT2Config, get_scheduler
+from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset
+from transformers import get_scheduler, PhiConfig, PhiForCausalLM
 import torch
 from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
@@ -13,7 +13,7 @@ import os
 
 class NetworkConfig:
     # All the instruments which are used in our encoding
-    config = GPT2Config(
+    config = PhiConfig(
         vocab_size=EncodingConfig.vocab_size,  # 423
         n_positions=1024,  # Maximum sequence length
         n_ctx=128,  # Context window size
@@ -24,89 +24,128 @@ class NetworkConfig:
     )
 
 
-def train(num_epochs: int,
-          batch_size: int = 16,
-          learning_rate: float = 1e-4,
-          lr_scheduler: str = 'cosine',
-          gradient_checkpointing: bool = False,
-          RAM_dataset: bool = False,
-          device: str = None,
-          continue_from: str = None,
-          model_name: str = 'GPT2_Model',
-          modulation: int = 0,
-          config=None):
-    """Trains a GPT-2 language model on the Lakh Pianoroll Dataset.
+def train(
+        # Training Hyperparameters
+        num_epochs: int, batch_size: int = 4,
+        learning_rate: float = 1e-4, lr_scheduler: str = 'cosine',
+        num_estimated_epochs: int = 100,
+        patience: int = 4,
 
-        This function performs end-to-end training of a GPT-2 model for music generation.
-        It supports training from scratch or resuming from a checkpoint, with configurable
-        hyperparameters and optimization settings. The function handles dataset loading,
-        model initialization, gradient optimization with clipping, learning rate scheduling,
-        and comprehensive logging of training metrics including loss, perplexity, and
-        gradient norms.
+        # Dataset parameters
+        modulation: int = 0,
+        fit_dataset_in_ram: bool = False,
 
-        :param int num_epochs: Number of training epochs to run.
-        :param int batch_size: Batch size for training, defaults to 16.
-        :param float learning_rate: Learning rate for the AdamW optimizer, defaults to 1e-4.
-        :param str lr_scheduler: Learning rate scheduler type, defaults to 'cosine'.
-                               Currently only 'cosine' is supported.
-        :param bool gradient_checkpointing: Enable gradient checkpointing to reduce memory usage
-                                          at the cost of computational overhead, defaults to False.
-        :param bool RAM_dataset: Load the entire dataset into RAM for faster access,
-                               defaults to False.
-        :param str device: Device to use for training ('cpu', 'cuda', 'xpu'). If None,
-                          automatically selects the best available device, defaults to None.
-        :param str continue_from: Path to a checkpoint directory to resume training from.
-                                If None, starts training from scratch, defaults to None.
-        :param str model_name: Name used for creating the logging directory,
-                             defaults to 'GPT2_Model'.
-        :param int modulation: Number of modulations for each midi file. Has to be created first with encode.py,
-                            defaults to 0.
-        :param config: Custom model configuration object. If None, uses the default
-                      NetworkConfig.config, defaults to None.
-        :raises NotImplementedError: If an unsupported learning rate scheduler is specified.
-        :raises Exception: If NaN values are detected in logits, loss, or if exploding
-                          gradients are detected (gradient norm > 1e6).
-        :returns: None. The function saves checkpoints and logs training progress to disk.
-        :rtype: None
+        # Hardware related parameters
+        accumulation_steps: int = 4,
+        gradient_checkpointing: bool = False,
+        device: str = None,
+
+        # Other parameters
+        model_name: str = 'Phi-2_Model',
+        continue_from: str = None,
+        config=None
+):
+    """Trains a Phi-2-2 language model for music generation on the Lakh Pianoroll Dataset.
+
+    This function provides a complete end-to-end pipeline for training, validation,
+    and checkpointing. It handles training from scratch or resuming from a previous
+    run, with a configurable cosine learning rate scheduler and comprehensive logging
+    to TensorBoard. It also supports early stopping to prevent overfitting and save
+    computation time.
+
+    The function expects the dataset to be organized into 'train' and 'valid'
+    subdirectories to prevent data leakage during validation. It saves checkpoints
+    after every epoch, which include all necessary states (model, optimizer, scheduler)
+    and hyperparameters to ensure that training can be reliably paused and resumed.
+
+    :param int num_epochs: The number of epochs to run for this specific training session.
+    :param int patience: The number of consecutive epochs to wait for an improvement in
+                         validation loss before stopping the training early. Defaults to 4.
+    :param int batch_size: The number of sequences in each training batch. Defaults to 4.
+    :param int accumulation_steps: The number of gradient accumulation steps. Default to 4.
+    :param float learning_rate: The initial learning rate for the AdamW optimizer. Defaults to 1e-4.
+    :param str lr_scheduler: The learning rate scheduler type. Currently, only 'cosine' is supported. Defaults to 'cosine'.
+    :param int num_estimated_epochs: The total number of epochs you *plan* to train for across all sessions.
+                                     This is crucial for creating a consistent learning rate schedule that
+                                     doesn't reset when you resume training. Defaults to 100.
+
+    :param int modulation: The number of data augmentations (key modulations) per MIDI file.
+                           This must match the pre-processed dataset. Defaults to 0.
+    :param bool fit_dataset_in_ram: If True, loads the entire dataset into RAM for faster access using
+                                    Phi-2RAMDataset. Requires significant memory. Defaults to False.
+
+    :param bool gradient_checkpointing: If True, enables gradient checkpointing to save memory at the cost
+                                        of a small computational overhead. Defaults to False.
+    :param str device: The hardware device to use for training ('cpu', 'cuda', 'xpu'). If None, it will
+                       be auto-detected. Defaults to None.
+
+    :param str model_name: The base name used for creating the logging and checkpoint directory.
+                           Defaults to 'Phi-2_Model'.
+    :param str continue_from: The name of the run directory (e.g., 'Phi-2_Model_run1') to resume
+                              training from. If None, starts a new run. Defaults to None.
+    :param config: A custom Hugging Face Phi-2Config object. If None, a default configuration from
+                   NetworkConfig is used. Defaults to None.
+
+    :raises NotImplementedError: If an unsupported `lr_scheduler` is specified.
+    :raises Exception: If NaN values are detected in the loss or if gradients explode.
+
+    :returns: None. The function saves all outputs (logs, checkpoints) to disk.
+    :rtype: None
     """
-    # We assume the root path is the current script path
-    root_path = os.path.dirname(os.path.abspath(__file__))
-
-    # Use a preferred device from a user or chose it automatically
+    # =================
+    # = Initial setup =
+    # =================
     device = get_device(device)
-    print('Using device:', device)
+    print(f'Using device: {device}\n')
 
-    optimizer_kwargs = {
-        'lr': learning_rate
-    }
-
-    start_epoch = 1
-    # Search checkpoint file and load it
-    if continue_from is not None:
-        continue_from = os.path.join(root_path, 'runs', continue_from)
-        model, optimizer, start_epoch, global_step = load_latest_checkpoint(continue_from,
-                                                                            device=device,
-                                                                            optimizer_class=AdamW,
-                                                                            **optimizer_kwargs)
-
-        # Move to device
-        model.to(device)
-        model.train()
-
-        log_dir = continue_from
-        print(f'Continuing from epoch {start_epoch}')
+    root_path = os.path.dirname(os.path.abspath(__file__))
+    # Get dataset and dataloader
+    if fit_dataset_in_ram:
+        train_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'train'))
+        valid_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'valid'))
     else:
-        print(f'Training from scratch.')
-        # Init global step as 0
+        train_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'train'))
+        valid_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'valid'))
+
+    # Only shuffle the dataset if it fits in ram, otherwise the file loading mechanism would prevent shuffling
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=False, num_workers=0
+    )
+    valid_dataloader = torch.utils.data.DataLoader(
+        valid_dataset, batch_size=batch_size, shuffle=False, num_workers=0
+    )
+
+    if continue_from is not None:
+        # Continue a previous run
+        log_dir = os.path.join(root_path, 'runs', continue_from)
+        model, training_loss_per_epoch, validation_loss_per_epoch, start_epoch, patience_dict, global_step, optimizer, optimizer_kwargs, lr_scheduler, lr_scheduler_kwargs = load_latest_checkpoint(
+            log_dir,
+            device=device,
+            optimizer_class=AdamW,
+            lr_scheduler_class=get_scheduler,
+        )
+        patience = patience_dict['patience']
+        patience_counter = patience_dict['patience_counter']
+        model.to(device)
+        print(f'Continuing training from epoch {start_epoch}\n')
+    else:
+        # Start a new run
+        start_epoch = 1
         global_step = 0
-        # Use custom config if provided
+        patience_counter = 0
+        training_loss_per_epoch = []
+        validation_loss_per_epoch = []
+
+        print('Training from scratch.')
         if config is None:
+            print('Using default config.\n')
             config = NetworkConfig.config
-
-        # Instantiate GPT-2 model
-        model = GPT2LMHeadModel(config)
-
-        # Define a function to initialize weights
+        else:
+            print('Using provided config.\n')
+        model = PhiForCausalLM(config)
+        model.to(device)
+        
+        # Initialize model weights
         def init_weights(module):
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
@@ -114,267 +153,321 @@ def train(num_epochs: int,
                     torch.nn.init.zeros_(module.bias)
             elif isinstance(module, torch.nn.Embedding):
                 torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-        # Apply the weight initialization
         model.apply(init_weights)
 
-        # Define optimizer
+        # ==================
+        # = Training setup =
+        # ==================
+
+        # Keep the kwargs as a variable to save them to checkpoints later
+        optimizer_kwargs = {'lr': learning_rate}
+        
+        # Get fresh optimizers and log dir
         optimizer = AdamW(model.parameters(), **optimizer_kwargs)
-
-        # Create new logging dir
         log_dir = get_next_run_folder(model_name, base_dir=os.path.join(root_path, 'runs'))
-
-        # Create the directory if it doesn't exist
         os.makedirs(log_dir, exist_ok=True)
 
-    # Get dataset and dataloader
-    if RAM_dataset:
-        dataset = GPT2RAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}'))
-    else:
-        dataset = GPT2Dataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}'))
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=0,
-    )
+        if lr_scheduler == 'cosine':
+            # Keep the kwargs as a variable to save them to checkpoints later
+            num_warmup_steps = 500 // accumulation_steps
+            lr_scheduler_kwargs = {
+                'name': 'cosine',
+                'num_warmup_steps': num_warmup_steps,
+                'num_training_steps': num_estimated_epochs * len(train_dataloader)
+            }
+            lr_scheduler = get_scheduler(optimizer=optimizer, **lr_scheduler_kwargs)
+        elif lr_scheduler is not None:
+            raise NotImplementedError(f'Learning rate scheduler {lr_scheduler} not implemented.')
 
-    # Initialize SummaryWriter with the log directory
+    if gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        model.config.use_cache = False
+
+    # Log every 20 accumulated steps
+    logging_interval = 20
     writer = SummaryWriter(log_dir=log_dir)
-    print(f'Logging to: {log_dir}')
+    print(f'Logging to: {log_dir}\n')
+    print('Phi2 Config:', {k: model.config.to_dict()[k] for k in ['hidden_size', 'intermediate_size', 'num_hidden_layers', 'num_attention_heads']})
+    print(f'Hyperparameters: lr={learning_rate}, batch_size={batch_size}, accumulation_steps={accumulation_steps}, num_warmup_steps={num_warmup_steps}\n')
 
-    # Define progress bar
-    num_training_steps = num_epochs * len(dataloader)
-
-    # Set the model to train and move it to the right device
-    model.train()
-    model.to(device)
-
+    # ======================
+    # = Main training loop =
+    # ======================
     # Define loss function
     loss_fn = CrossEntropyLoss(ignore_index=EncodingConfig.padding_token)
 
-    # Compile model for additional training speed
-    # Torch compile uses the triton backend, which I have not installed.
-    # As it turns out its easy to install via pip, but not for intel arc gpus.
-    # I will have to dual boot my pc into ubuntu 22.04 in order to install the intel xpu backend for triton.
-    # As I like the pycharm environment and I am used to Windows pcs,
-    # I will set up ubuntu server and use it as a remote development server and access it via my laptop.
-    # This is not the first time I have done this. When it works it works greate,
-    # but it takes a lot of time to get running.
-    # model = torch.compile(model)
-
-    if gradient_checkpointing:
-        # Enable memory optimizations (we can get away with less memory)
-        model.gradient_checkpointing_enable()
-
-        # Disable caching as it conflicts with gradient_checkpointing
-        model.config.use_cache = False
-
-    if lr_scheduler == 'cosine':
-        # Cosine Annealing with Warmup as learning rate scheduler
-        lr_scheduler = get_scheduler(
-            'cosine',
-            optimizer=optimizer,
-            num_warmup_steps=500,
-            num_training_steps=num_training_steps
-        )
-    else:
-        raise NotImplementedError(f'Learning rate scheduler {lr_scheduler} not implemented.')
-
-    # Print out relevant gpt2 configurations
-    print('GPT2 config: ')
-    for key in ['n_positions', 'n_ctx', 'n_embd', 'n_layer', 'n_head']:
-        print(f'   {key} = {model.config.to_dict()[key]}')
-    print('')
-
-    # Start training
-    print(f'Training for {num_epochs} epochs with batch size {batch_size}.')
-    print(' ')
-    progress_bar = tqdm(range(num_training_steps), desc='Training Progress')
-    train_loss = []
+    print(f'Starting training for {num_epochs} epochs...')
+    progress_bar = tqdm(initial=global_step, total=num_epochs * len(train_dataloader), desc='Training Progress')
     for epoch in range(start_epoch, start_epoch + num_epochs):
-        total_loss = 0
-        for batch_idx, batch in enumerate(dataloader):
+        # --- Training Step ---
+        model.train()
+        total_train_loss = 0.0
+        accumulated_loss = 0.0
+
+        for i, batch in enumerate(train_dataloader):
             input_ids = batch[0].to(device).long()
-            # We dont need padding since our data is always 1024 tokens long
-            # attention_mask = batch[1].to(device).long()
 
-            # Zero gradients before the backward pass (best practice for pytorch)
-            optimizer.zero_grad()
-
-            # If we only give the inputs and not the labels, the hugging face model will not calculate
-            # the loss on its own, so we can use our own loss function
+            # Make a forward pass
             outputs = model(input_ids=input_ids)
-
-            # Remove last timestep, because it does not predict anything
+            # Remove the last timestep because it does not predict anything
             shift_logits = outputs.logits[..., :-1, :].contiguous()
             # Remove the first timestep because it does not have a previous to predict
             shift_labels = input_ids[..., 1:].contiguous()
 
             loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
-            # Check if there are any NaN values
-            if torch.isnan(outputs.logits).any():
-                print('WARNING: NaN detected in logits!')
-                raise Exception
-
-            if torch.isnan(loss):
-                print('WARNING: NaN detected in loss!')
-                raise Exception
-
-            # Backward pass
+            # Accumulate the gradient to make use of our full physical VRAM
+            # and making our effective batch size more stable due to averaging
+            detached_loss = loss.detach().cpu().item()
+            accumulated_loss += detached_loss
+            # Scale the loss
+            loss = loss / accumulation_steps
+            # Calculate the current gradient
             loss.backward()
 
-            # Gradient Clipping to prevent exploding gradients
-            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+            if torch.isnan(loss): raise Exception('NaN detected in training loss!')
 
-            if total_norm > 1e6:
-                print('WARNING: Exploding gradients detected!')
-                raise Exception
+            # Update weights only every 'accumulation_steps'
+            if (i + 1) % accumulation_steps == 0:
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                if total_norm > 1e6: raise Exception('Exploding gradients detected!')
 
-            # Optimizer step
-            optimizer.step()
+                # Make a learning step with the accumulated gradients
+                optimizer.step()
+                optimizer.zero_grad()
 
-            if lr_scheduler is not None:
-                # Update learning rate
-                lr_scheduler.step()
+                if lr_scheduler is not None:
+                    # Update learning rate
+                    lr_scheduler.step()
+                    last_lr = lr_scheduler.get_last_lr()[0]
+                else:
+                    last_lr = learning_rate
 
-            # Calculate and log stats
-            detached_loss = loss.detach().cpu().item()
-            total_loss += detached_loss
+                # --- Per-Step Logging & Progress Bar ---
+                avg_accumulated_loss = accumulated_loss / accumulation_steps
+                total_train_loss += avg_accumulated_loss
+                global_step += 1
+                progress_bar.update(accumulation_steps)
 
-            global_step += 1
+                if global_step % logging_interval == 0:
+                    writer.add_scalar('Per-Step/Training Loss', avg_accumulated_loss, global_step)
+                    writer.add_scalar('Per-Step/Learning Rate', last_lr, global_step)
+                    writer.add_scalar('Per-Step/Gradient Norm', total_norm, global_step)
+                    progress_bar.set_postfix({'Loss': f'{detached_loss:.4f}', 'LR': f'{last_lr:.6f}'})
 
-            writer.add_scalar('Training Loss', detached_loss, global_step)
-            if lr_scheduler is not None:
-                writer.add_scalar('Learning Rate', lr_scheduler.get_last_lr()[0], global_step)
-            writer.add_scalar('Gradient Norm', total_norm, global_step)
-            # Add if statement to prevent numerical overflow
-            perplexity = math.exp(detached_loss) if detached_loss < 20 else float('inf')
-            writer.add_scalar('Perplexity', perplexity, global_step)
+                accumulated_loss = 0.0
 
-            display_stats = {
-                'Batch': batch_idx,
-                'Loss': f'{detached_loss:.4f}',
-                'GradNorm': f'{total_norm:.2f}',
-                'Perplexity': f'{perplexity:.2f}'
-            }
-            if lr_scheduler is not None:
-                display_stats['LR'] = f'{lr_scheduler.get_last_lr()[0]:.6f}'
+        # --- Per-Epoch Training Logging ---
+        # avg_train_loss is calculated over optimizer steps, not batches anymore
+        num_optimizer_steps = len(train_dataloader) // accumulation_steps
+        avg_train_loss = total_train_loss / num_optimizer_steps if num_optimizer_steps > 0 else 0
+        training_loss_per_epoch.append(avg_train_loss)
+        writer.add_scalar('Per-Epoch/Training Loss', avg_train_loss, epoch)
+        writer.add_scalar('Per-Epoch/Training Perplexity', math.exp(avg_train_loss), epoch)
 
-            # Display stats in the progress bar
-            progress_bar.set_postfix(display_stats)
-            progress_bar.update(1)
+        # --- Validation Step ---
+        model.eval()
+        total_val_loss = 0.0
+        with torch.no_grad():
+            for batch in tqdm(valid_dataloader, desc=f'Epoch {epoch} Validation'):
+                input_ids = batch[0].to(device).long()
+                outputs = model(input_ids=input_ids, labels=input_ids)
+                total_val_loss += outputs.loss.detach().cpu().item()
 
-        # Log total train loss over epoch
-        train_loss.append(total_loss / len(dataset))
-        writer.add_scalar('Total Training Loss', total_loss / len(dataset), global_step)
-        
-        # Save state dict and other parameters after each epoch
+        # --- Per-Epoch Validation Logging ---
+        avg_val_loss = total_val_loss / len(valid_dataloader)
+        validation_loss_per_epoch.append(avg_val_loss)
+
+        writer.add_scalar('Per-Epoch/Validation Loss', avg_val_loss, epoch)
+        writer.add_scalar('Per-Epoch/Validation Perplexity', math.exp(avg_val_loss), epoch)
+        print(f'\nEpoch {epoch}: Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f}')
+
+        # --- Checkpointing ---
         checkpoint_data = {
             'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
+            'training_loss_per_epoch': training_loss_per_epoch,
+            'validation_loss_per_epoch': validation_loss_per_epoch,
+            'patience': {
+                'patience': patience, 
+                'patience_counter': patience_counter
+            },
             'global_step': global_step,
-            'config': model.config.to_dict()
+            'model_state_dict': model.state_dict(),
+            'config': model.config.to_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'optimizer_kwargs': optimizer_kwargs,
+            'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
         }
+        torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
 
-        torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_{epoch}.ph'))
+        # Check if we should increase patience counter or reset it
+        best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
+        if avg_val_loss < best_val_loss:
+            patience_counter = 0
+            # Save as current as the best model
+            torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
+        else:
+            patience_counter += 1
+
+        # Early stop
+        if patience_counter >= patience:
+            print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
+            break
 
     print('Training completed!')
     writer.close()
 
 
 def run_trainings_from_code():
-    config1 = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=256,  # Context window size
-        n_embd=256,  # Embedding size
-        n_layer=2,  # Number of transformer layers
-        n_head=2,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
-    )
+    hyperparameters = {
+        'num_epochs': 1,
+        'patience': 5,
+        'batch_size': 4,
+        'accumulation_steps': 4,
+        'learning_rate': 1e-4,
+        'lr_scheduler': 'cosine',
+        'num_estimated_epochs': 10,
+        'modulation': 0,
+        'fit_dataset_in_ram': True,
+        'gradient_checkpointing': False,
+        'device': 'xpu',
+        'model_name': 'Phi-2_Tiny',
+        'continue_from': 'Phi-2_Tiny_1',
+    }
 
-    config2 = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=256,  # Context window size
-        n_embd=256,  # Embedding size
-        n_layer=4,  # Number of transformer layers
-        n_head=4,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
-    )
+    ### TODO: Try to find the balance between physical batch size and effective batch size
+    # I can try to increase physical batch size, this normal introduces instability, but with
+    # gradient accumulation I can counteract this maybe.
 
-    config3 = GPT2Config(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=256,  # Context window size
-        n_embd=384,  # Embedding size
-        n_layer=6,  # Number of transformer layers
-        n_head=6,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
+    config1 = PhiConfig(
+        vocab_size=EncodingConfig.vocab_size,
+        max_position_embeddings=1024,
+        hidden_size=256,
+        intermediate_size=1024,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        pad_token_id=EncodingConfig.padding_token,
+        eos_token_id=EncodingConfig.end_note
     )
-    num_epochs = 2
-    batch_size = 16
-    learning_rate = 1e-4
-    lr_scheduler = 'cosine'
-    gradient_checkpointing = False
-    RAM_dataset = True
-    device = 'xpu'
-    modulation = 0
+    hyperparameters1 = hyperparameters.copy()
+    hyperparameters1['model_name'] = 'Phi-2_Small'
+    hyperparameters1['continue_from'] = None  # 'Phi-2_Small_1'
+    hyperparameters1['num_estimated_epochs'] = 20
+    hyperparameters1['batch_size'] = 6
+    hyperparameters1['accumulation_steps'] = 16
+    hyperparameters1['learning_rate'] = 5e-4
+
+    config2 = PhiConfig(
+        vocab_size=EncodingConfig.vocab_size,
+        max_position_embeddings=1024,
+        hidden_size=384,
+        intermediate_size=1536,
+        num_hidden_layers=6,
+        num_attention_heads=6,
+        pad_token_id=EncodingConfig.padding_token,
+        eos_token_id=EncodingConfig.end_note
+    )
+    hyperparameters2 = hyperparameters.copy()
+    hyperparameters2['model_name'] = 'Phi-2_Medium'
+    hyperparameters2['continue_from'] = None  # 'Phi-2_Medium_1'
+    hyperparameters2['num_estimated_epochs'] = 30
+    hyperparameters2['batch_size'] = 8
+    hyperparameters2['accumulation_steps'] = 4
+    hyperparameters2['learning_rate'] = 5e-4
+
+    config3 = PhiConfig(
+        vocab_size=EncodingConfig.vocab_size,
+        max_position_embeddings=1024,
+        hidden_size=512,
+        intermediate_size=2048,
+        num_hidden_layers=8,
+        num_attention_heads=8,
+        pad_token_id=EncodingConfig.padding_token,
+        eos_token_id=EncodingConfig.end_note
+    )
+    hyperparameters3 = hyperparameters.copy()
+    hyperparameters3['model_name'] = 'Phi-2_Large'
+    hyperparameters3['continue_from'] = None  # 'Phi-2_Large_1'
+    hyperparameters3['num_estimated_epochs'] = 30
+    hyperparameters3['batch_size'] = 8
+    hyperparameters3['accumulation_steps'] = 4
+    hyperparameters3['learning_rate'] = 5e-4
 
     # Train with same parameters but different configs
-    for name, config, continue_from_path in [
-        ('GPT2_Medium', config3, 'GPT2_Medium_1'),
-        ('GPT2_Small', config2, 'GPT2_Small_1'),
-        ('GPT2_Tiny', config1, 'GPT2_Tiny_1')
+    for config, hp in [
+        (config1, hyperparameters1),
+        # (config2, hyperparameters2),
+        # (config3, hyperparameters3)
     ]:
-        if name == 'GPT2_Medium':
-            batch_size = 4
-        else:
-            batch_size = 16
-        train(num_epochs=num_epochs,
-              batch_size=batch_size,
-              learning_rate=learning_rate,
-              lr_scheduler=lr_scheduler,
-              gradient_checkpointing=gradient_checkpointing,
-              RAM_dataset=RAM_dataset,
-              device=device,
-              continue_from=continue_from_path,
-              model_name=name,
-              modulation=modulation,
-              config=config)
+        print(f'Training with config model: {hp["model_name"]}')
+        train(config=config, **hp)
+        # For debugging we only train one network and try to continue it later
+        break
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--num_epochs', type=int, required=True, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for optimizer')
-    parser.add_argument('--lr_scheduler', type=str, default='cosine', choices=['cosine'], help='Learning rate scheduler type')
-    parser.add_argument('--gradient_checkpointing', action='store_true', help='Enable gradient checkpointing to save memory')
-    parser.add_argument('--RAM_dataset', action='store_true', help='Load entire dataset into memory')
-    parser.add_argument('--modulation', type=int, default=0, help='Number of modulations for each midi file')
-    parser.add_argument('--device', type=str, default=None, help='Device to use: cpu, cuda, or xpu (auto-select if None)')
-    parser.add_argument('--continue_from', type=str, default=None, help='Path to a directory to continue training from a checkpoint')
-    parser.add_argument('--run_trainings_from_code', type=bool, default=False,
-                        help='Ignores command line interface arguments and runs the training function.')
+    # Using ArgumentDefaultsHelpFormatter shows the default values in the --help message
+    parser = argparse.ArgumentParser(
+        description='Train a language model for music generation.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    # --- Group arguments for better readability ---
+    train_params = parser.add_argument_group('Training Parameters')
+    data_params = parser.add_argument_group('Dataset & Hardware Parameters')
+    run_params = parser.add_argument_group('Run Management Parameters')
+
+    # --- Training Parameters ---
+    train_params.add_argument('--num_epochs', type=int, required=True,
+                              help='Number of epochs for this training session.')
+    train_params.add_argument('--patience', type=int, default=4,
+                              help='Epochs to wait for validation loss improvement before stopping.')
+    train_params.add_argument('--batch_size', type=int, default=16,
+                              help='Batch size for training.')
+    train_params.add_argument('--learning_rate', type=float, default=1e-4,
+                              help='Initial learning rate for the optimizer.')
+    train_params.add_argument('--lr_scheduler', type=str, default='cosine', choices=['cosine'],
+                              help='Learning rate scheduler type.')
+    train_params.add_argument('--num_estimated_epochs', type=int, default=100,
+                              help='Total planned epochs for creating a consistent LR schedule.')
+
+    # --- Dataset & Hardware Parameters ---
+    data_params.add_argument('--modulation', type=int, default=0,
+                             help='Number of data augmentations (key modulations) per MIDI file.')
+    data_params.add_argument('--fit_dataset_in_ram', action='store_true',
+                             help='Load the entire dataset into RAM. Requires significant memory.')
+    data_params.add_argument('--gradient_checkpointing', action='store_true',
+                             help='Enable gradient checkpointing to save memory.')
+    data_params.add_argument('--device', type=str, default=None,
+                             help='Device to use: cpu, cuda, or xpu (auto-select if None).')
+
+    # --- Run Management Parameters ---
+    run_params.add_argument('--model_name', type=str, default='Phi-2_Model',
+                            help='Base name for the run and logging directory.')
+    run_params.add_argument('--continue_from', type=str, default=None,
+                            help="Name of the run directory (e.g., 'Phi-2_Model_run1') to resume training from.")
+    run_params.add_argument('--run_trainings_from_code', action='store_true',
+                            help='If specified, ignores other CLI arguments and runs a hardcoded training session.')
 
     args = parser.parse_args()
 
     if args.run_trainings_from_code:
         run_trainings_from_code()
     else:
+        # Pass all the relevant arguments to the train function
         train(num_epochs=args.num_epochs,
+              patience=args.patience,
               batch_size=args.batch_size,
               learning_rate=args.learning_rate,
               lr_scheduler=args.lr_scheduler,
-              gradient_checkpointing=args.gradient_checkpointing,
-              RAM_dataset=args.RAM_dataset,
-              continue_from=args.continue_from,
+              num_estimated_epochs=args.num_estimated_epochs,
               modulation=args.modulation,
-              device=args.device)
+              fit_dataset_in_ram=args.fit_dataset_in_ram,
+              gradient_checkpointing=args.gradient_checkpointing,
+              device=args.device,
+              model_name=args.model_name,
+              continue_from=args.continue_from)
 
 
 

@@ -5,8 +5,8 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
-class GPT2Dataset(Dataset):
-    """A PyTorch Dataset for loading chunked GPT-2 training data with efficient memory management.
+class MidiDataset(Dataset):
+    """A PyTorch Dataset for loading chunked midi training data with efficient memory management.
 
         This dataset class is designed to handle large-scale tokenized music data that has been
         pre-processed and split into multiple compressed chunk files. It implements an efficient
@@ -138,8 +138,8 @@ class GPT2Dataset(Dataset):
         raise IndexError('Index out of range.')
 
 
-class GPT2RAMDataset(Dataset):
-    """A PyTorch Dataset that loads all chunked GPT-2 training data into RAM for fast access.
+class MidiRAMDataset(Dataset):
+    """A PyTorch Dataset that loads all chunked midi file training data into RAM for fast access.
 
         This dataset class loads the entire tokenized music dataset into system memory during
         initialization, providing maximum training speed at the cost of high memory usage.

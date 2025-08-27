@@ -474,7 +474,7 @@ def encode_dataset(
         # Create and start the single writer process
         writer_process = mp.Process(
             target=save_chunks_writer,  # An approximation of the number of sequences
-            args=(output_folder, results_queue, len(files), chunk_size, sentile)
+            args=(output_folder, results_queue, 300_000 * (da + 1), chunk_size, sentile)
         )
         writer_process.start()
 
