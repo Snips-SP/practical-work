@@ -252,7 +252,7 @@ def chord2tokens(chord: str) -> list:
 
 
 def load_latest_checkpoint(
-        directory: str, name: str = 'checkpoint_', device: str = 'cpu',
+        directory: str, name: str = 'checkpoint_epoch_', device: str = 'cpu',
         optimizer_class=None, learning_rate_scheduler_class=None
 ):
     """Load the latest checkpoint from a directory based on epoch number.
@@ -368,15 +368,15 @@ def load_latest_checkpoint(
     # ================================
     learning_rate_scheduler = None
     learning_rate_scheduler_kwargs = None
-    if learning_rate_scheduler_class is not None and 'learning_rate_scheduler_state_dict' in checkpoint and checkpoint['learning_rate_scheduler_kwargs'] is not None:
+    if learning_rate_scheduler_class is not None and 'lr_scheduler_state_dict' in checkpoint and checkpoint['lr_scheduler_kwargs'] is not None:
         try:
-            learning_rate_scheduler_kwargs = checkpoint['learning_rate_scheduler_kwargs']
+            learning_rate_scheduler_kwargs = checkpoint['lr_scheduler_kwargs']
             learning_rate_scheduler = learning_rate_scheduler_class(optimizer=optimizer,  **learning_rate_scheduler_kwargs)
         except Exception as e:
             raise ValueError(f'Failed to create learning rate scheduler: {e}')
 
         try:
-            learning_rate_scheduler.load_state_dict(checkpoint['learning_rate_scheduler_state_dict'])
+            learning_rate_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
         except Exception as e:
             raise ValueError(f'Failed to load learning rate scheduler state dict: {e}')
 

@@ -1,3 +1,5 @@
+import json
+
 from backend.ml_model.helper import get_device, load_latest_checkpoint, get_next_run_folder, EncodingConfig
 from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset
 from transformers import get_scheduler, PhiConfig, PhiForCausalLM
@@ -51,7 +53,7 @@ def train(
         config=None,
         debug: bool = False,
 ):
-    """Trains a Phi-2-2 language model for music generation on the Lakh Pianoroll Dataset.
+    '''Trains a Phi-2-2 language model for music generation on the Lakh Pianoroll Dataset.
 
     This function provides a complete end-to-end pipeline for training, validation,
     and checkpointing. It handles training from scratch or resuming from a previous
@@ -97,9 +99,9 @@ def train(
     :raises NotImplementedError: If an unsupported `lr_scheduler` is specified.
     :raises Exception: If NaN values are detected in the loss or if gradients explode.
 
-    :returns: None. The function saves all outputs (logs, checkpoints) to disk.
-    :rtype: None
-    """
+    :returns: Bool. The function saves all outputs (logs, checkpoints) to disk.
+    :rtype: Bool
+    '''
     ### TODO: Figure out why the anomaly detection prevents exploding gradients when increasing the batch size from 6 to 16
     torch.autograd.set_detect_anomaly(debug)
     # =================
@@ -129,14 +131,15 @@ def train(
     if continue_from is not None:
         # Continue a previous run
         log_dir = os.path.join(root_path, 'runs', continue_from)
-        model, training_loss_per_epoch, validation_loss_per_epoch, start_epoch, patience_dict, global_step, optimizer, optimizer_kwargs, lr_scheduler, lr_scheduler_kwargs = load_latest_checkpoint(
+        model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, lr_scheduler, lr_scheduler_kwargs = load_latest_checkpoint(
             log_dir,
             device=device,
             optimizer_class=AdamW,
-            lr_scheduler_class=get_scheduler,
+            learning_rate_scheduler_class=get_scheduler,
         )
         patience = patience_dict['patience']
         patience_counter = patience_dict['patience_counter']
+        num_warmup_steps = lr_scheduler_kwargs['num_warmup_steps']
         model.to(device)
         print(f'Continuing training from epoch {start_epoch}\n')
     else:
@@ -246,7 +249,7 @@ def train(
     # ======================
 
     print(f'Starting training for {num_epochs} epochs...')
-    progress_bar = tqdm(initial=global_step, total=num_epochs * len(train_dataloader), desc='Training Progress')
+    progress_bar = tqdm(initial=0, total=num_epochs * len(train_dataloader), desc='Training Progress')
     for epoch in range(start_epoch, start_epoch + num_epochs):
         # --- Training Step ---
         model.train()
@@ -302,7 +305,7 @@ def train(
                             writer.add_histogram(f'Per-Step/Weights/{name}', param.data, global_step)
                         else:
                             flag = True
-                            print(f'Warning: Skipping weight histogram for "{name}" due to non-finite values.')
+                            print(f'Warning: Skipping weight histogram for {name} due to non-finite values.')
 
                         # Log Per-Layer Gradient Norms (with safety check)
                         if param.requires_grad and param.grad is not None:
@@ -311,7 +314,7 @@ def train(
                                 writer.add_scalar(f'Per-Step/Gradients/{name}_norm', grad_norm.item(), global_step)
                             else:
                                 flag = True
-                                print(f'Warning: Skipping gradient norm for "{name}" due to non-finite values.')
+                                print(f'Warning: Skipping gradient norm for {name} due to non-finite values.')
 
                     # Log mean absolute activation captured by hooks (as requested)
                     for name, value in activation_stats.items():
@@ -403,30 +406,59 @@ def train(
         # Early stop
         if patience_counter >= patience:
             print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
-            break
+            writer.close()
+            return True
 
     print('Training completed!')
     writer.close()
+    return False
 
 
-def run_trainings_from_code():
-    hyperparameters = {
-        'num_epochs': 1,
-        'patience': 5,
-        'batch_size': 4,
-        'accumulation_steps': 4,
-        'learning_rate': 1e-4,
-        'lr_scheduler': 'cosine',
-        'num_estimated_epochs': 10,
-        'modulation': 0,
-        'fit_dataset_in_ram': True,
-        'num_workers': 4,
-        'gradient_checkpointing': False,
-        'device': 'xpu',
-        'model_name': 'Phi-2_Tiny',
-        'continue_from': 'Phi-2_Tiny_1',
+MODEL_CONFIGURATIONS = {
+    'Phi-2_Small': {
+        'config': PhiConfig(
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token, eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=256, intermediate_size=1024, num_hidden_layers=4, num_attention_heads=4,
+            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 20, 'modulation': 0, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Small', 'continue_from': 'Phi-2_Small_1',
+        }
+    },
+    'Phi-2_Medium': {
+        'config': PhiConfig(
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token, eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=384, intermediate_size=1536, num_hidden_layers=6, num_attention_heads=6,
+            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Medium', 'continue_from': 'Phi-2_Medium_1',
+        }
+    },
+    'Phi-2_Large': {
+        'config': PhiConfig(
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token, eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=512, intermediate_size=2048, num_hidden_layers=8, num_attention_heads=8,
+            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Large', 'continue_from': 'Phi-2_Large_1',
+        }
     }
+}
 
+
+def training_manager(epochs_per_session=2, progress_file='runs/progress.json'):
+    """
+    Manages the training schedule by automatically selecting and training
+    the model with the fewest completed epochs.
+    """
     ### TODO: The training works with a different dataset while using the compleate VRAM
     # This means we made an error making this dataset.
     # Maybe its the fixed length of all sequences of 1024
@@ -438,162 +470,61 @@ def run_trainings_from_code():
     # We do not use our full VRAM but we are able to use 90% of the gpu. Finding this bug has cost me too many days
     # and a large part of my soul...
 
-    config1 = PhiConfig(
-        vocab_size=EncodingConfig.vocab_size,
-        pad_token_id=EncodingConfig.padding_token,
-        eos_token_id=EncodingConfig.end_note,
+    while True:
+        root_path = os.path.dirname(os.path.abspath(__file__))
+        progress_file = os.path.join(root_path, progress_file)
+        # Load or initialize training progress
+        try:
+            with open(progress_file, 'r') as f:
+                progress = json.load(f)
+            print(f'Loaded progress from {progress_file}')
+        except FileNotFoundError:
+            print(f'{progress_file} not found. Initializing new progress tracker.')
+            progress = {name: {'progress': 0, 'done': False} for name in MODEL_CONFIGURATIONS.keys()}
 
-        max_position_embeddings=1024,
-        hidden_size=256,
-        intermediate_size=1024,
-        num_hidden_layers=4,
-        num_attention_heads=4,
+        print('Current training status:', progress)
 
-        # --- CRITICAL STABILITY ADDITIONS ---
-        tie_word_embeddings=True,
-        layer_norm_eps=1e-5,
-        rope_theta=10000.0,
+        #  Select the model with the least training
+        if all(details['done'] for details in progress.values()):
+            print('All models are done. Exiting training manager.')
+            return
 
-        # --- Standard Initializer ---
-        initializer_range=0.02,
-    )
-    hyperparameters1 = hyperparameters.copy()
-    hyperparameters1['model_name'] = 'Phi-2_Small'
-    hyperparameters1['continue_from'] = None  # 'Phi-2_Small_1'
-    hyperparameters1['num_estimated_epochs'] = 20
-    hyperparameters1['batch_size'] = 6
-    hyperparameters1['accumulation_steps'] = 1
-    hyperparameters1['learning_rate'] = 5e-4
-    hyperparameters1['num_workers'] = 0
+        # Chose model with minimum epochs trained from the ones which are not done yet
+        unfinished_models = {
+            name: details for name, details in progress.items() if not details['done']
+        }
 
-    config2 = PhiConfig(
-        vocab_size=EncodingConfig.vocab_size,
-        max_position_embeddings=1024,
-        hidden_size=384,
-        intermediate_size=1536,
-        num_hidden_layers=6,
-        num_attention_heads=6,
-        pad_token_id=EncodingConfig.padding_token,
-        eos_token_id=EncodingConfig.end_note,
+        # Check if any unfinished models exist and find the one with min progress
+        if unfinished_models:
+            model_to_train = min(unfinished_models, key=lambda model: unfinished_models[model]['progress'])
+            print(f'Model with least progress to train next: {model_to_train})')
+        else:
+            print('All models are done. No models to train.')
+            print('')
+            print('----------------------------------')
+            print('!!!NO MORE TRAINING IS NEEDED!!!')
+            print('----------------------------------')
+            return
 
-        # --- CRITICAL STABILITY ADDITIONS ---
-        tie_word_embeddings=True,
-        layer_norm_eps=1e-5,
-        rope_theta=10000.0,
+        # Prepare and run the training
+        model_data = MODEL_CONFIGURATIONS[model_to_train]
+        config = model_data['config']
+        # Use a copy to avoid modifying the original dict
+        hp = model_data['hyperparameters'].copy()
+        hp['num_epochs'] = epochs_per_session
 
-        # --- Standard Initializer ---
-        initializer_range=0.02,
-    )
-    hyperparameters2 = hyperparameters.copy()
-    hyperparameters2['model_name'] = 'Phi-2_Medium'
-    hyperparameters2['continue_from'] = None  # 'Phi-2_Medium_1'
-    hyperparameters2['num_estimated_epochs'] = 30
-    hyperparameters2['batch_size'] = 6
-    hyperparameters2['accumulation_steps'] = 1
-    hyperparameters2['learning_rate'] = 5e-4
-    hyperparameters2['num_workers'] = 0
+        # train the model
+        done = train(config=config, debug=False, **hp)
 
-    config3 = PhiConfig(
-        vocab_size=EncodingConfig.vocab_size,
-        max_position_embeddings=1024,
-        hidden_size=512,
-        intermediate_size=2048,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        pad_token_id=EncodingConfig.padding_token,
-        eos_token_id=EncodingConfig.end_note,
+        # Update the progress file if training was successful
+        progress[model_to_train]['progress'] += epochs_per_session
+        progress[model_to_train]['done'] = done
 
-        # --- CRITICAL STABILITY ADDITIONS ---
-        tie_word_embeddings=True,
-        layer_norm_eps=1e-5,
-        rope_theta=10000.0,
+        with open(progress_file, 'w') as f:
+            json.dump(progress, f, indent=4)
 
-        # --- Standard Initializer ---
-        initializer_range=0.02,
-    )
-    hyperparameters3 = hyperparameters.copy()
-    hyperparameters3['model_name'] = 'Phi-2_Large'
-    hyperparameters3['continue_from'] = None  # 'Phi-2_Large_1'
-    hyperparameters3['num_estimated_epochs'] = 30
-    hyperparameters3['batch_size'] = 6
-    hyperparameters3['accumulation_steps'] = 1
-    hyperparameters3['learning_rate'] = 5e-4
-    hyperparameters3['num_workers'] = 0
-
-    # Train with same parameters but different configs
-    for config, hp in [
-        (config1, hyperparameters1),
-        (config2, hyperparameters2),
-        (config3, hyperparameters3)
-    ]:
-        print(f'Training with config model: {hp["model_name"]}')
-        train(config=config, debug=False, **hp)
-        # For debugging we only train one network and try to continue it later
-        break
-
-
-def get_temp_dataset(batch_size):
-    # Using a popular, small model's tokenizer for the example
-    tokenizer_name = "microsoft/phi-2"
-
-    # --- 1. Load Dataset from Hugging Face ---
-    # Wikitext-2 is a well-known, high-quality language modeling dataset.
-    # The `load_dataset` function downloads and caches the data.
-    print("Loading dataset...")
-    raw_datasets = load_dataset('wikitext', 'wikitext-2-raw-v1')
-
-    # --- 2. Load a Pre-trained Tokenizer ---
-    print("Loading tokenizer...")
-    # We need a tokenizer to convert the raw text into integer IDs for the model.
-    # Using the Phi-2 tokenizer as an example.
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
-    # Language models need a padding token. If the tokenizer doesn't have one, we add it.
-    if tokenizer.pad_token is None:
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-
-    # --- 3. Tokenize the Dataset ---
-    # We'll create a function to tokenize the text and then apply it to the entire dataset.
-    def tokenize_function(examples):
-        # The tokenizer converts text strings to a dictionary of 'input_ids', 'attention_mask', etc.
-        return tokenizer(examples["text"], truncation=True, max_length=512)
-
-    print("Tokenizing dataset...")
-    # The .map() function applies our tokenization efficiently.
-    # `batched=True` processes multiple rows at once for speed.
-    # `remove_columns` gets rid of the original text column, as we only need the token IDs.
-    tokenized_datasets = raw_datasets.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=["text"]
-    )
-
-    # The result is a dictionary of datasets for each split ('train', 'validation', 'test')
-    train_dataset = tokenized_datasets["train"]
-    valid_dataset = tokenized_datasets["validation"]
-
-    # --- 4. Create a Data Collator ---
-    # The data collator is a helper function that takes a list of samples from the dataset
-    # and pads them to the same length to form a batch. This is crucial for language models.
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-
-    # --- 5. Create DataLoaders in Your Style ---
-    # Now we create the PyTorch DataLoader, similar to your original code.
-    # It's standard practice to always shuffle the training data.
-    print("Creating DataLoaders...")
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=data_collator
-    )
-    valid_dataloader = torch.utils.data.DataLoader(
-        valid_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=data_collator
-    )
-
-    return train_dataloader, valid_dataloader, tokenizer
+        print(f'\nProgress file updated. {model_to_train} now has {progress[model_to_train]["progress"]} total epochs.')
+        print('')
 
 
 if __name__ == '__main__':
@@ -636,14 +567,14 @@ if __name__ == '__main__':
     run_params.add_argument('--model_name', type=str, default='Phi-2_Model',
                             help='Base name for the run and logging directory.')
     run_params.add_argument('--continue_from', type=str, default=None,
-                            help="Name of the run directory (e.g., 'Phi-2_Model_run1') to resume training from.")
-    run_params.add_argument('--run_trainings_from_code', action='store_true',
+                            help='Name of the run directory (e.g., "Phi-2_Model_run1") to resume training from.')
+    run_params.add_argument('--training_manager', action='store_true',
                             help='If specified, ignores other CLI arguments and runs a hardcoded training session.')
 
     args = parser.parse_args()
 
-    if args.run_trainings_from_code:
-        run_trainings_from_code()
+    if args.training_manager:
+        training_manager()
     else:
         # Pass all the relevant arguments to the train function
         train(num_epochs=args.num_epochs,
