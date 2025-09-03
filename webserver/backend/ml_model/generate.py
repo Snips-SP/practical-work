@@ -100,7 +100,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
         raise ValueError('The number of chords must be equal to the number of timings')
 
     # Load model from the folder
-    model, _, _, _ = load_latest_checkpoint(model_dir)
+    model, _, _, _, _, _, _, _, _, _ = load_latest_checkpoint(model_dir)
     # Move to device
     model.to(device)
     model.eval()
@@ -111,7 +111,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
 
     # Use a fixed-size deque for the context window to prevent unbounded memory growth
     # The size should be based on the model's window size.
-    context_window_size = model.config.n_positions  # e.g., 1024 for GPT-2
+    context_window_size = model.config.max_position_embeddings  # e.g., 1024
     context_sequence = deque(maxlen=context_window_size)
 
     # Create an empty pianoroll array

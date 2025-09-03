@@ -375,6 +375,15 @@ def train(
         writer.add_scalar('Per-Epoch/Validation Perplexity', math.exp(avg_val_loss), epoch)
         print(f'\nEpoch {epoch}: Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f}')
 
+        # Check if we should increase patience counter or reset it
+        best_model = False
+        best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
+        if avg_val_loss <= best_val_loss:
+            patience_counter = 0
+            best_model = True
+        else:
+            patience_counter += 1
+
         # --- Checkpointing ---
         checkpoint_data = {
             'epoch': epoch,
@@ -393,15 +402,9 @@ def train(
             'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
         }
         torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
-
-        # Check if we should increase patience counter or reset it
-        best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
-        if avg_val_loss < best_val_loss:
-            patience_counter = 0
+        if best_model:
             # Save as current as the best model
             torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
-        else:
-            patience_counter += 1
 
         # Early stop
         if patience_counter >= patience:
@@ -454,7 +457,7 @@ MODEL_CONFIGURATIONS = {
 }
 
 
-def training_manager(epochs_per_session=2, progress_file='runs/progress.json'):
+def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
     """
     Manages the training schedule by automatically selecting and training
     the model with the fewest completed epochs.

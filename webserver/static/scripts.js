@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // TODO: Fix the audioPlayer duration bug
     // Currently audioPlayer.duration is always a smaller number than the actual song duration
     // I remember fixing this bug before the redo of the frontend, but I can't remember how I did it
-    audioPlayer.addEventListener('loadedmetadata', () => console.log(audioPlayer.duration));
+    //audioPlayer.addEventListener('loadedmetadata', () => console.log(audioPlayer.duration));
     audioPlayer.addEventListener('timeupdate', () => currentTimeDisplay.textContent = formatTime(audioPlayer.currentTime));
 
     moreOptionsBtn.addEventListener('click', () => {
@@ -95,7 +95,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // Update Advanced Options
         temperatureInput.value = metadata.temperature || 1.0;
-        topKInput.value = metadata.top_k || 8;
+        topKInput.value = metadata.top_k || 0;
         topPInput.value = metadata.top_p || 0.9;
 
         // Find and select the correct model
