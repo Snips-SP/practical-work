@@ -114,10 +114,10 @@ def train(
     # Get dataset and dataloader
     if fit_dataset_in_ram:
         train_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'train'))
-        valid_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'valid'))
+        valid_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_0', 'valid'))
     else:
         train_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'train'))
-        valid_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'valid'))
+        valid_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_0', 'valid'))
 
     # Only shuffle the dataset if it fits in ram, otherwise the file loading mechanism would prevent shuffling
     train_dataloader = torch.utils.data.DataLoader(
@@ -128,7 +128,7 @@ def train(
         valid_dataset, batch_size=batch_size, shuffle=False, num_workers=0
     )
 
-    if continue_from is not None:
+    if continue_from is not None and os.path.isdir(os.path.join(root_path, 'runs', continue_from)):
         # Continue a previous run
         log_dir = os.path.join(root_path, 'runs', continue_from)
         model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, lr_scheduler, lr_scheduler_kwargs = load_latest_checkpoint(
@@ -194,8 +194,10 @@ def train(
     logging_interval = 5
     writer = SummaryWriter(log_dir=log_dir)
     print(f'Logging to: {log_dir}\n')
-    print('Phi2 Config:', {k: model.config.to_dict()[k] for k in ['hidden_size', 'intermediate_size', 'num_hidden_layers', 'num_attention_heads']})
-    print(f'Hyperparameters: lr={learning_rate}, batch_size={batch_size}, accumulation_steps={accumulation_steps}, num_warmup_steps={num_warmup_steps}\n')
+    print('Phi2 Config:', {k: model.config.to_dict()[k] for k in
+                           ['hidden_size', 'intermediate_size', 'num_hidden_layers', 'num_attention_heads']})
+    print(
+        f'Hyperparameters: lr={learning_rate}, batch_size={batch_size}, accumulation_steps={accumulation_steps}, num_warmup_steps={num_warmup_steps}\n')
 
     # ===================
     # = Debugging model =
@@ -408,7 +410,14 @@ def train(
 
         # Early stop
         if patience_counter >= patience:
-            print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
+            # For testing we dont stop until we have reached our estimated amount of epochs
+            # print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
+            # writer.close()
+            # return True
+            pass
+
+        if epoch >= num_estimated_epochs:
+            # Stop at estimated epochs
             writer.close()
             return True
 
@@ -420,38 +429,92 @@ def train(
 MODEL_CONFIGURATIONS = {
     'Phi-2_Small': {
         'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token, eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=256, intermediate_size=1024, num_hidden_layers=4, num_attention_heads=4,
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
+            eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=256, intermediate_size=1024, num_hidden_layers=4,
+            num_attention_heads=4,
             tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
         ),
         'hyperparameters': {
             'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
             'lr_scheduler': 'cosine', 'num_estimated_epochs': 20, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Small', 'continue_from': 'Phi-2_Small_1',
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Small',
+            'continue_from': 'Phi-2_Small_1',
         }
     },
     'Phi-2_Medium': {
         'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token, eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=384, intermediate_size=1536, num_hidden_layers=6, num_attention_heads=6,
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
+            eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=384, intermediate_size=1536, num_hidden_layers=6,
+            num_attention_heads=6,
             tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
         ),
         'hyperparameters': {
             'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
             'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Medium', 'continue_from': 'Phi-2_Medium_1',
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Medium',
+            'continue_from': 'Phi-2_Medium_1',
         }
     },
     'Phi-2_Large': {
         'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token, eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=512, intermediate_size=2048, num_hidden_layers=8, num_attention_heads=8,
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
+            eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=512, intermediate_size=2048, num_hidden_layers=8,
+            num_attention_heads=8,
             tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
         ),
         'hyperparameters': {
             'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
             'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Large', 'continue_from': 'Phi-2_Large_1',
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Large',
+            'continue_from': 'Phi-2_Large_1',
+        }
+    },
+    'Phi-2_Small_da_6': {
+        'config': PhiConfig(
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
+            eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=256, intermediate_size=1024, num_hidden_layers=4,
+            num_attention_heads=4,
+            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 40, 'modulation': 6, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Small_da_6',
+            'continue_from': 'Phi-2_Small_da_6_1',
+        }
+    },
+    'Phi-2_Medium_da_6': {
+        'config': PhiConfig(
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
+            eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=384, intermediate_size=1536, num_hidden_layers=6,
+            num_attention_heads=6,
+            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 50, 'modulation': 6, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Medium_da_6',
+            'continue_from': 'Phi-2_Medium_da_6_1',
+        }
+    },
+    'Phi-2_Large_da_6': {
+        'config': PhiConfig(
+            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
+            eos_token_id=EncodingConfig.end_note,
+            max_position_embeddings=1024, hidden_size=512, intermediate_size=2048, num_hidden_layers=8,
+            num_attention_heads=8,
+            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 60, 'modulation': 6, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Large_da_6',
+            'continue_from': 'Phi-2_Large_da_6_1',
         }
     }
 }
@@ -462,17 +525,6 @@ def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
     Manages the training schedule by automatically selecting and training
     the model with the fewest completed epochs.
     """
-    ### TODO: The training works with a different dataset while using the compleate VRAM
-    # This means we made an error making this dataset.
-    # Maybe its the fixed length of all sequences of 1024
-    # Maybe 1024 is to large, the dummy dataset is only at max 512 and
-    # has variable sequence lengths
-    # Inform yourself about this and try to fix it
-
-    # I will ignore this error and just see how well the training goes with a smaller batch size
-    # We do not use our full VRAM but we are able to use 90% of the gpu. Finding this bug has cost me too many days
-    # and a large part of my soul...
-
     while True:
         root_path = os.path.dirname(os.path.abspath(__file__))
         progress_file = os.path.join(root_path, progress_file)

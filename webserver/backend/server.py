@@ -138,8 +138,13 @@ def generate_music():
     music_dir = os.path.join('static', 'music')
     os.makedirs(music_dir, exist_ok=True)
 
-    # Get generated songs from user
+    # Get generated songs and check if the name is already used
     filename = sanitize_filename(name)
+    songs = [os.path.splitext(f)[0] for f in os.listdir(os.path.join('static', 'music')) if f.endswith('.mp3')]
+
+    if filename in songs:
+        return jsonify({'error': 'Song already exists'}), 400
+
     new_song_path = os.path.join(music_dir, f'{filename}.mp3')
 
     # Make a temporary folder and file location
