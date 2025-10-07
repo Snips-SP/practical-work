@@ -45,11 +45,24 @@ MODEL_CONFIGURATIONS = {
             layer_norm_eps=1e-5,
             tie_word_embeddings=False,
         ),
+
         'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-3-head-dim-64',
-        }
+            'num_epochs': 2,
+            'batch_size': 6,
+            'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine',
+            'num_estimated_epochs': 50, ### TODO: Find right amount of estimated epochs
+            'patience': 5,
+            'accumulation_steps': 1,
+            'n_modulations': 11,
+            'num_workers': -1,  # Use all the workers
+            'attention_implementation': 'sdpa',
+            'model_dtype': 'bfloat16',
+            'compile_model': True,
+            'gradient_checkpointing': False,
+            'device': 'xpu',
+            'model_name': 'Phi-3-head-dim-64',
+        },
     },
     'Phi-3-head-dim-32': {
         # --- Config V2: head_dim=32 ---
@@ -76,10 +89,22 @@ MODEL_CONFIGURATIONS = {
             tie_word_embeddings=False,
         ),
         'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-3-head-dim-32',
-        }
+            'num_epochs': 2,
+            'batch_size': 6,
+            'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine',
+            'num_estimated_epochs': 50, ### TODO: Find right amount of estimated epochs
+            'patience': 5,
+            'accumulation_steps': 1,
+            'n_modulations': 11,
+            'num_workers': -1,  # Use all the workers
+            'attention_implementation': 'sdpa',
+            'model_dtype': 'bfloat16',
+            'compile_model': True,
+            'gradient_checkpointing': False,
+            'device': 'xpu',
+            'model_name': 'Phi-3-head-dim-32',
+        },
     }
 }
 
@@ -87,28 +112,28 @@ MODEL_CONFIGURATIONS = {
 class NetworkConfig:
     # All the instruments which are used in our encoding
     config = Phi3Config(
-            # --- Core architecture ---
-            hidden_size=512,
-            num_hidden_layers=8,
-            intermediate_size=2048,  # 4x MLP expansion ratio
+        # --- Core architecture ---
+        hidden_size=512,
+        num_hidden_layers=8,
+        intermediate_size=2048,  # 4x MLP expansion ratio
 
-            # --- Attention: Using a head_dim of 64 ---
-            num_attention_heads=8,  # Derived from hidden_size / 64
-            num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
+        # --- Attention: Using a head_dim of 64 ---
+        num_attention_heads=8,  # Derived from hidden_size / 64
+        num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
 
-            # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=2048,
-            rope_theta=10000.0,
-            vocab_size=EncodingConfig.vocab_size,
-            bos_token_id=EncodingConfig.begin_note,
-            eos_token_id=EncodingConfig.end_note,
-            pad_token_id=EncodingConfig.padding_token,
-            hidden_act='silu',
-            initializer_range=0.02,
-            layer_norm_eps=1e-5,
-            tie_word_embeddings=False,
-            _attn_implementation='sdpa'
-        )
+        # --- Standard parameters for a Phi-3 model ---
+        max_position_embeddings=2048,
+        rope_theta=10000.0,
+        vocab_size=EncodingConfig.vocab_size,
+        bos_token_id=EncodingConfig.begin_note,
+        eos_token_id=EncodingConfig.end_note,
+        pad_token_id=EncodingConfig.padding_token,
+        hidden_act='silu',
+        initializer_range=0.02,
+        layer_norm_eps=1e-5,
+        tie_word_embeddings=False,
+        _attn_implementation='sdpa'
+    )
 
 
 def train(
@@ -126,10 +151,12 @@ def train(
         random_seed: int = 42,
 
         # Hardware related parameters
-        flash_attention: bool = True,
+        attention_implementation: str = 'sdpa',
         accumulation_steps: int = 4,
         gradient_checkpointing: bool = False,
         device: str = None,
+        model_dtype=torch.bfloat16,
+        compile_model: bool = False,
 
         # Other parameters
         model_name: str = 'Phi-2_Model',
@@ -198,15 +225,17 @@ def train(
         config.initializer_range = 0.02
 
         # Turn on flash attention or sdpa if wanted
-        if device == 'cuda' and flash_attention:
-            config._attn_implementation = 'flash_attention_2'
-        #elif device == 'xpu' and flash_attention:
-        #    config._attn_implementation = 'sdpa'
+        if device == 'cuda' and (attention_implementation == 'flash_attention_2' or attention_implementation == 'sdpa'):
+            config._attn_implementation = attention_implementation
+        elif device == 'xpu' and attention_implementation == 'sdpa':
+            config._attn_implementation = attention_implementation
+        else:
+            raise ValueError(f'Invalid attention implementation {attention_implementation} for device {device}.')
+
+        # Set the attention implementation
+
         # Create a model from config
         model = Phi3ForCausalLM(config)
-        ### TODO: Debug the flash attention and create a scalor for the loss on float32 for xpu
-        attention_class_name = model.model.layers[0].self_attn.__class__.__name__
-        print(f"\nVerification successful: Attention module is '{attention_class_name}'")
 
         # Keep the kwargs as a variable to save them to checkpoints later
         optimizer_kwargs = {
@@ -244,7 +273,16 @@ def train(
         valid_dataset = OnTheFlyMidiDataset(valid_files, 0, chunk_size=1024)
         print(f'Continuing training from epoch {start_epoch}\n')
 
-    model.to(device)#, dtype=torch.float16)
+    model.to(device, dtype=model_dtype)
+
+    # Compile the model to use graph like representation
+    if compile_model:
+        model = torch.compile(model)
+
+    # Enable gradient checkpointing
+    if gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        model.config.use_cache = False
 
     # Create dataloader
     train_dataloader = DataLoader(
@@ -262,14 +300,6 @@ def train(
         pin_memory=True
     )
 
-    # Enable gradient checkpointing if wanted
-    if gradient_checkpointing:
-        model.gradient_checkpointing_enable()
-        model.config.use_cache = False
-
-    # GradScaler for XPU
-    # scaler = torch.xpu.amp.GradScaler()
-
     # Log every 20 accumulated steps
     logging_interval = 5
     writer = SummaryWriter(log_dir=log_dir)
@@ -279,7 +309,6 @@ def train(
         if param != 'config':
             print(f"{param:<25}: {value}")
     print('------------------------------------------------------')
-    # ... your training logic would start here ...
 
     # ===================
     # = Debugging model =
@@ -341,17 +370,9 @@ def train(
 
         for i, batch in enumerate(train_dataloader):
             # Our dataset returns a tensor of size (16, 1024) of dtype int64
-            input_ids = batch[0].to(device).long()
+            input_ids = batch[0].to(device)
 
             # Make a forward pass
-            # outputs = model(input_ids=input_ids)
-            # Remove the last timestep because it does not predict anything
-            # shift_logits = outputs.logits[..., :-1, :].contiguous()
-            # Remove the first timestep because it does not have a previous to predict
-            # shift_labels = input_ids[..., 1:].contiguous()
-
-            # loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-
             # The model will automatically shift the labels and calculate the loss
             outputs = model(input_ids=input_ids, labels=input_ids)
 
@@ -614,13 +635,17 @@ if __name__ == '__main__':
                                  help='Device to use: cpu, cuda, or xpu (auto-selects if None).')
     hardware_params.add_argument('--gradient_checkpointing', action='store_true',
                                  help='Enable gradient checkpointing to save memory at the cost of speed.')
+    hardware_params.add_argument('--dtype', type=str, default='float32',
+                                 help='Datatype of the model. (float32, bfloat16, or float16).')
+    hardware_params.add_argument('--attention_implementation', type=str, default='sdpa',
+                                 help='Attention implementation of the model. (flash_attention_2, sdpa or eager).')
 
-    # Mutually exclusive group for flash attention for clear on/off control
-    fa_group = hardware_params.add_mutually_exclusive_group()
-    fa_group.add_argument('--use-flash-attention', action='store_true', dest='flash_attention', default=True,
-                          help='Enable FlashAttention for faster training (default).')
-    fa_group.add_argument('--no-flash-attention', action='store_false', dest='flash_attention',
-                          help='Disable FlashAttention.')
+    # Mutually exclusive group for compile for clear on/off control
+    compile_group = hardware_params.add_mutually_exclusive_group()
+    compile_group.add_argument('--compile', action='store_true', dest='compile',
+                               help='Compiles model for faster training. Requires compatible hardware and libraries.')
+    compile_group.add_argument('--no-compile', action='store_false', dest='compile', default=True,
+                               help='Disable compile.')
 
     # --- Run Management Parameters ---
     run_params.add_argument('--model_name', type=str, default='Phi-2_Model',
@@ -639,6 +664,15 @@ if __name__ == '__main__':
     if args.training_manager:
         training_manager()
     else:
+        if args.dtype == 'float32':
+            dtype = torch.float32
+        elif args.dtype == 'bfloat16':
+            dtype = torch.bfloat16
+        elif args.dtype == 'float16':
+            dtype = torch.float16
+        else:
+            raise ValueError(f'Invalid dtype: {args.dtype}')
+
         # Pass all the relevant arguments to the train function
         train(
             num_epochs=args.num_epochs,
@@ -653,7 +687,9 @@ if __name__ == '__main__':
             n_modulations=args.n_modulations,
             num_workers=args.num_workers,
             random_seed=args.random_seed,
-            flash_attention=args.flash_attention,
+            attention_implementation=args.attention_implementation,
+            model_dtype=dtype,
+            compile_model=args.compile,
             gradient_checkpointing=args.gradient_checkpointing,
             device=args.device,
             model_name=args.model_name,

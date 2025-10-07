@@ -281,7 +281,6 @@ class Runner:
 
             # Write all sequences to seq
             for _, sub_seq in seq_buffer:
-                ### TODO: Change order of instruments Drums, Bass, Piano, Guitar, Strings
                 sub_seq.append(EncodingConfig.end_note)
                 seq.extend(EncodingConfig.reorder_current(sub_seq))
 

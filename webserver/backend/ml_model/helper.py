@@ -1,5 +1,6 @@
 import json
 
+import numpy as np
 from transformers import PhiConfig, Phi3ForCausalLM
 from pydub import AudioSegment
 from pydub.utils import which
@@ -14,7 +15,7 @@ import os
 
 class EncodingConfig:
     """
-    EncodingConfig holds the token layout and helper mappings for notes, drums and microtiming tokens.
+    EncodingConfig holds the token layout and helper mappings for notes, drums, and microtiming tokens.
     Call EncodingConfig.initialize() once at startup to populate maps.
     """
 
@@ -120,16 +121,32 @@ class EncodingConfig:
     @staticmethod
     def reorder_current(cur_seq):
         """
-        Reorder the sequence in one timestep so that melodic tokens always come first and are ordered accendingly.
+        Reorder the sequence in one timestep so we have Drums, Bass, Piano, Guitar, and Strings, efficiently in numpy.
         Assumes instruments are encoded in blocks of size EncodingConfig.note_size.
         """
-        # Stort melodic tokens in an accenting order
-        melodic_notes = [c for c in cur_seq if 0 <= c < EncodingConfig.instrument_bases['Drums']]
-        # Dont sort drum tokens, though, since microtiming tokens and special tokens depend on order
-        other_notes = [c for c in cur_seq if EncodingConfig.instrument_bases['Drums'] <= c < EncodingConfig.vocab_size]
+        # Convert the list to a NumPy array (one-time cost)
+        seq_arr = np.array(cur_seq)
 
-        # Sort each group to keep deterministic ordering
-        return sorted(melodic_notes) + other_notes
+        # Define the boundaries for clarity
+        drums_base = EncodingConfig.instrument_bases['Drums']
+        special_base = EncodingConfig.instrument_bases['Special']
+
+        # Create boolean masks to identify token types in a single pass
+        melodic_mask = seq_arr < drums_base
+        drum_mask = (seq_arr >= drums_base) & (seq_arr < special_base)
+        # The other mask can be inferred from the first two
+        other_mask = ~ (melodic_mask | drum_mask)
+
+        # Apply masks to get the sections. This is much faster than list comprehensions.
+        melodic_notes = seq_arr[melodic_mask]
+        drum_notes = seq_arr[drum_mask]
+        other_tokens = seq_arr[other_mask]
+
+        # Sort the melodic notes using NumPy's highly optimized sort
+        melodic_notes.sort()
+
+        # Concatenate the results and convert back to a list
+        return np.concatenate((drum_notes, melodic_notes, other_tokens)).tolist()
 
 
 EncodingConfig.initialize()
