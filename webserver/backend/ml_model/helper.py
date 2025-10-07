@@ -1,4 +1,6 @@
-from transformers import PhiConfig, PhiForCausalLM
+import json
+
+from transformers import PhiConfig, Phi3ForCausalLM
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
@@ -50,6 +52,7 @@ class EncodingConfig:
     # Special tokens (filled during initialize)
     time_note: int = None
     end_note: int = None
+    begin_note: int = None
 
     # Drum pitches used in your dataset (sorted)
     drum_pitches: List[int] = [27, 28, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50,
@@ -102,6 +105,8 @@ class EncodingConfig:
         cls.instrument_bases['Special'] = current
         # Special tokens: time_note, end_note, padding
         cls.time_note = current
+        current += 1
+        cls.begin_note = current
         current += 1
         cls.end_note = current
         current += 1
@@ -278,9 +283,6 @@ def load_latest_checkpoint(
     """
 
     # Validate inputs
-    if not os.path.exists(directory):
-        raise FileNotFoundError(f'Directory not found: {directory}')
-
     if not os.path.isdir(directory):
         raise NotADirectoryError(f'Not a directory: {directory}')
 
@@ -328,7 +330,7 @@ def load_latest_checkpoint(
 
     # Create model from config
     try:
-        model = PhiForCausalLM(config)
+        model = Phi3ForCausalLM(config)
         model.to(device)
     except Exception as e:
         raise ValueError(f'Failed to create PhiForCausalLM from config: {e}')
@@ -380,6 +382,22 @@ def load_latest_checkpoint(
         except Exception as e:
             raise ValueError(f'Failed to load learning rate scheduler state dict: {e}')
 
+    # ===================================
+    # = Load train valid and test split =
+    # ===================================
+    if os.path.isfile(os.path.join(directory, 'train_valid_test_split.json')):
+        with open(os.path.join(directory, 'train_valid_test_split.json'), 'r') as f:
+            train_valid_test_split = json.load(f)
+
+        train_files = train_valid_test_split['train_files']
+        valid_files = train_valid_test_split['valid_files']
+        test_files = train_valid_test_split['test_files']
+    else:
+        train_files = None
+        valid_files = None
+        test_files = None
+        print(f'Warning: "train_valid_test_split.json" file not found in {directory}.')
+
     # ==================================
     # = Extract training progress info =
     # ==================================
@@ -413,7 +431,7 @@ def load_latest_checkpoint(
         global_step = None
         print(f'Warning: "global_step" key not found in checkpoint.')
 
-    return model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, learning_rate_scheduler, learning_rate_scheduler_kwargs
+    return model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, learning_rate_scheduler, learning_rate_scheduler_kwargs, train_files, valid_files, test_files
 
 
 def get_device(preferred: str = None) -> str:
@@ -445,37 +463,3 @@ def get_device(preferred: str = None) -> str:
         return 'cuda'
     else:
         return 'cpu'
-
-
-def get_next_run_folder(name, base_dir='runs'):
-    """Generates the next available run folder path with sequential numbering.
-
-        Scans the base directory for existing folders matching the pattern '{name}_{index}'
-        and returns a path for the next sequential run folder. Useful for organizing
-        experiment outputs without overwriting previous runs.
-
-        :param str name: Base name for the run folder (e.g., 'experiment', 'training').
-        :param str base_dir: Directory to search for existing runs, defaults to 'runs'.
-        :returns: Path to the next available run folder (e.g., 'runs/experiment_3').
-        :rtype: str
-    """
-    # List all folders in the base directory
-    existing_folders = os.listdir(base_dir)
-
-    # Regex to capture 'run_<index>' format
-    run_pattern = re.compile(fr'^{name}_(\d+)$')
-
-    # Find the highest index
-    max_index = 0
-    for folder in existing_folders:
-        match = run_pattern.match(folder)
-        if match:
-            # Extract the index from folder name
-            index = int(match.group(1))
-            max_index = max(max_index, index)
-
-    # Increase the index by 1 for the next run
-    new_run_name = f'{name}_{max_index + 1}'
-    new_run_path = os.path.join(base_dir, new_run_name)
-
-    return new_run_path

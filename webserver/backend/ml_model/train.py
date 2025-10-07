@@ -1,33 +1,114 @@
+import glob
 import json
+import random
 
-from backend.ml_model.helper import get_device, load_latest_checkpoint, get_next_run_folder, EncodingConfig
-from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset
-from transformers import get_scheduler, PhiConfig, PhiForCausalLM
+from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
+from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset, OnTheFlyMidiDataset
+from torch.utils.data import DataLoader
+from transformers import get_scheduler, Phi3ForCausalLM, Phi3Config
 import torch
 from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
-from torch.nn import CrossEntropyLoss
 from tqdm import tqdm
 import argparse
 import math
 import os
 
+from typing import List, Tuple
+
 # Temp
 from datasets import load_dataset
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
+MODEL_CONFIGURATIONS = {
+    'Phi-3-head-dim-64': {
+        # --- Config V1: head_dim=64 ---
+        'config': Phi3Config(
+            # --- Core architecture ---
+            hidden_size=512,
+            num_hidden_layers=8,
+            intermediate_size=2048,  # 4x MLP expansion ratio
+
+            # --- Attention: Using a head_dim of 64 ---
+            num_attention_heads=8,  # Derived from hidden_size / 64
+            num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
+
+            # --- Standard parameters for a Phi-3 model ---
+            max_position_embeddings=2048,
+            rope_theta=10000.0,
+            vocab_size=EncodingConfig.vocab_size,
+            bos_token_id=EncodingConfig.begin_note,
+            eos_token_id=EncodingConfig.end_note,
+            pad_token_id=EncodingConfig.padding_token,
+            hidden_act='silu',
+            initializer_range=0.02,
+            layer_norm_eps=1e-5,
+            tie_word_embeddings=False,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-3-head-dim-64',
+        }
+    },
+    'Phi-3-head-dim-32': {
+        # --- Config V2: head_dim=32 ---
+        'config': Phi3Config(
+            # --- Core architecture ---
+            hidden_size=512,
+            num_hidden_layers=8,
+            intermediate_size=2048,  # 4x MLP expansion ratio
+
+            # --- Attention: Using a head_dim of 32 ---
+            num_attention_heads=16,  # Derived from hidden_size / 32
+            num_key_value_heads=4,  # GQA ratio (16/4)
+
+            # --- Standard parameters for a Phi-3 model ---
+            max_position_embeddings=2048,
+            rope_theta=10000.0,
+            vocab_size=EncodingConfig.vocab_size,
+            bos_token_id=EncodingConfig.begin_note,
+            eos_token_id=EncodingConfig.end_note,
+            pad_token_id=EncodingConfig.padding_token,
+            hidden_act='silu',
+            initializer_range=0.02,
+            layer_norm_eps=1e-5,
+            tie_word_embeddings=False,
+        ),
+        'hyperparameters': {
+            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
+            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
+            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-3-head-dim-32',
+        }
+    }
+}
+
 
 class NetworkConfig:
     # All the instruments which are used in our encoding
-    config = PhiConfig(
-        vocab_size=EncodingConfig.vocab_size,  # 423
-        n_positions=1024,  # Maximum sequence length
-        n_ctx=128,  # Context window size
-        n_embd=256,  # Embedding size
-        n_layer=1,  # Number of transformer layers
-        n_head=1,  # Number of attention heads
-        pad_token_id=EncodingConfig.padding_token,  # 422
-    )
+    config = Phi3Config(
+            # --- Core architecture ---
+            hidden_size=512,
+            num_hidden_layers=8,
+            intermediate_size=2048,  # 4x MLP expansion ratio
+
+            # --- Attention: Using a head_dim of 64 ---
+            num_attention_heads=8,  # Derived from hidden_size / 64
+            num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
+
+            # --- Standard parameters for a Phi-3 model ---
+            max_position_embeddings=2048,
+            rope_theta=10000.0,
+            vocab_size=EncodingConfig.vocab_size,
+            bos_token_id=EncodingConfig.begin_note,
+            eos_token_id=EncodingConfig.end_note,
+            pad_token_id=EncodingConfig.padding_token,
+            hidden_act='silu',
+            initializer_range=0.02,
+            layer_norm_eps=1e-5,
+            tie_word_embeddings=False,
+            _attn_implementation='sdpa'
+        )
 
 
 def train(
@@ -38,117 +119,73 @@ def train(
         patience: int = 4,
 
         # Dataset parameters
-        modulation: int = 0,
-        fit_dataset_in_ram: bool = False,
+        split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+        dataset_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lpd_5'),
+        n_modulations: int = 0,
         num_workers: int = 0,
+        random_seed: int = 42,
 
         # Hardware related parameters
+        flash_attention: bool = True,
         accumulation_steps: int = 4,
         gradient_checkpointing: bool = False,
         device: str = None,
 
         # Other parameters
         model_name: str = 'Phi-2_Model',
-        continue_from: str = None,
+        runs_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
         config=None,
         debug: bool = False,
 ):
-    '''Trains a Phi-2-2 language model for music generation on the Lakh Pianoroll Dataset.
-
-    This function provides a complete end-to-end pipeline for training, validation,
-    and checkpointing. It handles training from scratch or resuming from a previous
-    run, with a configurable cosine learning rate scheduler and comprehensive logging
-    to TensorBoard. It also supports early stopping to prevent overfitting and save
-    computation time.
-
-    The function expects the dataset to be organized into 'train' and 'valid'
-    subdirectories to prevent data leakage during validation. It saves checkpoints
-    after every epoch, which include all necessary states (model, optimizer, scheduler)
-    and hyperparameters to ensure that training can be reliably paused and resumed.
-
-    :param int num_epochs: The number of epochs to run for this specific training session.
-    :param int patience: The number of consecutive epochs to wait for an improvement in
-                         validation loss before stopping the training early. Defaults to 4.
-    :param int batch_size: The number of sequences in each training batch. Defaults to 4.
-    :param int accumulation_steps: The number of gradient accumulation steps. Default to 4.
-    :param float learning_rate: The initial learning rate for the AdamW optimizer. Defaults to 1e-4.
-    :param str lr_scheduler: The learning rate scheduler type. Currently, only 'cosine' is supported. Defaults to 'cosine'.
-    :param int num_estimated_epochs: The total number of epochs you *plan* to train for across all sessions.
-                                     This is crucial for creating a consistent learning rate schedule that
-                                     doesn't reset when you resume training. Defaults to 100.
-
-    :param int modulation: The number of data augmentations (key modulations) per MIDI file.
-                           This must match the pre-processed dataset. Defaults to 0.
-    :param bool fit_dataset_in_ram: If True, loads the entire dataset into RAM for faster access using
-                                    Phi-2RAMDataset. Requires significant memory. Defaults to False.
-    :param int num_workers: The number of workers to use for data loading. Defaults to 0.
-
-    :param bool gradient_checkpointing: If True, enables gradient checkpointing to save memory at the cost
-                                        of a small computational overhead. Defaults to False.
-    :param str device: The hardware device to use for training ('cpu', 'cuda', 'xpu'). If None, it will
-                       be auto-detected. Defaults to None.
-
-    :param str model_name: The base name used for creating the logging and checkpoint directory.
-                           Defaults to 'Phi-2_Model'.
-    :param str continue_from: The name of the run directory (e.g., 'Phi-2_Model_run1') to resume
-                              training from. If None, starts a new run. Defaults to None.
-    :param config: A custom Hugging Face Phi-2Config object. If None, a default configuration from
-                   NetworkConfig is used. Defaults to None.
-    :param bool debug: If True, enables additional debugging features. Defaults to False.
-
-    :raises NotImplementedError: If an unsupported `lr_scheduler` is specified.
-    :raises Exception: If NaN values are detected in the loss or if gradients explode.
-
-    :returns: Bool. The function saves all outputs (logs, checkpoints) to disk.
-    :rtype: Bool
-    '''
-    ### TODO: Figure out why the anomaly detection prevents exploding gradients when increasing the batch size from 6 to 16
     torch.autograd.set_detect_anomaly(debug)
-    # =================
-    # = Initial setup =
-    # =================
     device = get_device(device)
     print(f'Using device: {device}\n')
 
-    root_path = os.path.dirname(os.path.abspath(__file__))
-    # Get dataset and dataloader
-    if fit_dataset_in_ram:
-        train_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'train'))
-        valid_dataset = MidiRAMDataset(os.path.join(root_path, f'lpd_5_dataset_da_0', 'valid'))
-    else:
-        train_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_{modulation}', 'train'))
-        valid_dataset = MidiDataset(os.path.join(root_path, f'lpd_5_dataset_da_0', 'valid'))
+    if not abs(sum(split_ratios) - 1.0) < 1e-8:
+        raise ValueError(f'Split ratios must sum to 1.0, but got {sum(split_ratios)}')
 
-    # Only shuffle the dataset if it fits in ram, otherwise the file loading mechanism would prevent shuffling
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=fit_dataset_in_ram,
-        num_workers=num_workers if fit_dataset_in_ram else 0
-    )
-    valid_dataloader = torch.utils.data.DataLoader(
-        valid_dataset, batch_size=batch_size, shuffle=False, num_workers=0
-    )
+    # Check if the right dataset is used
+    if not os.path.isdir(os.path.join(dataset_path, 'lpd_5_cleansed')):
+        raise Exception(f'Dataset {dataset_path}, does not contain the expected folder "lpd_5_cleansed".')
 
-    if continue_from is not None and os.path.isdir(os.path.join(root_path, 'runs', continue_from)):
-        # Continue a previous run
-        log_dir = os.path.join(root_path, 'runs', continue_from)
-        model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, lr_scheduler, lr_scheduler_kwargs = load_latest_checkpoint(
-            log_dir,
-            device=device,
-            optimizer_class=AdamW,
-            learning_rate_scheduler_class=get_scheduler,
-        )
-        patience = patience_dict['patience']
-        patience_counter = patience_dict['patience_counter']
-        num_warmup_steps = lr_scheduler_kwargs['num_warmup_steps']
-        model.to(device)
-        print(f'Continuing training from epoch {start_epoch}\n')
-    else:
-        # Start a new run
+    # Path to model log dir
+    log_dir = os.path.join(runs_path, model_name)
+    if not os.path.isdir(log_dir):
+        # =================
+        # = Start new run =
+        # =================
         start_epoch = 1
         global_step = 0
         patience_counter = 0
         training_loss_per_epoch = []
         validation_loss_per_epoch = []
+        os.makedirs(log_dir, exist_ok=True)
+
+        # Create train, valid and test splits from scratch
+        sample_files = glob.glob(os.path.join(dataset_path, 'lpd_5_cleansed/*/*/*/*/*.npz'))
+
+        random.seed(random_seed)
+        random.shuffle(sample_files)
+
+        # Calculate the split indices
+        total_size = len(sample_files)
+        train_end = int(total_size * split_ratios[0])
+        valid_end = train_end + int(total_size * split_ratios[1])
+
+        # Slice the shuffled list to create the splits
+        train_files = sample_files[:train_end]
+        valid_files = sample_files[train_end:valid_end]
+        test_files = sample_files[valid_end:]
+
+        with open(os.path.join(log_dir, 'train_valid_test_split.json'), 'w') as f:
+            json.dump({
+                'train': train_files,
+                'valid': valid_files,
+                'test': test_files
+            }, f, indent=4)
+
+        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations, chunk_size=1024)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, 0, chunk_size=1024)
 
         print('Training from scratch.')
         if config is None:
@@ -156,23 +193,28 @@ def train(
             config = NetworkConfig.config
         else:
             print('Using provided config.\n')
-        # Initializing model weights is done automatically by providing initializer_range=0.02 in the config
-        model = PhiForCausalLM(config)
-        model.to(device)
 
-        # ==================
-        # = Training setup =
-        # ==================
+        # Initializing model weights is done automatically by providing initializer_range=0.02 in the config
+        config.initializer_range = 0.02
+
+        # Turn on flash attention or sdpa if wanted
+        if device == 'cuda' and flash_attention:
+            config._attn_implementation = 'flash_attention_2'
+        #elif device == 'xpu' and flash_attention:
+        #    config._attn_implementation = 'sdpa'
+        # Create a model from config
+        model = Phi3ForCausalLM(config)
+        ### TODO: Debug the flash attention and create a scalor for the loss on float32 for xpu
+        attention_class_name = model.model.layers[0].self_attn.__class__.__name__
+        print(f"\nVerification successful: Attention module is '{attention_class_name}'")
 
         # Keep the kwargs as a variable to save them to checkpoints later
         optimizer_kwargs = {
             'lr': learning_rate,
         }
 
-        # Get fresh optimizers and log dir
+        # Get fresh optimizers
         optimizer = AdamW(model.parameters(), **optimizer_kwargs)
-        log_dir = get_next_run_folder(model_name, base_dir=os.path.join(root_path, 'runs'))
-        os.makedirs(log_dir, exist_ok=True)
 
         if lr_scheduler == 'cosine':
             # Keep the kwargs as a variable to save them to checkpoints later
@@ -180,24 +222,64 @@ def train(
             lr_scheduler_kwargs = {
                 'name': 'cosine',
                 'num_warmup_steps': num_warmup_steps,
-                'num_training_steps': num_estimated_epochs * len(train_dataloader)
+                'num_training_steps': num_estimated_epochs * len(train_files) // batch_size
             }
             lr_scheduler = get_scheduler(optimizer=optimizer, **lr_scheduler_kwargs)
         elif lr_scheduler is not None:
             raise NotImplementedError(f'Learning rate scheduler {lr_scheduler} not implemented.')
+    else:
+        # =================================
+        # = Continue from last checkpoint =
+        # =================================
+        model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, lr_scheduler, lr_scheduler_kwargs, train_files, valid_files, test_files = load_latest_checkpoint(
+            log_dir,
+            device=device,
+            optimizer_class=AdamW,
+            learning_rate_scheduler_class=get_scheduler,
+        )
+        patience = patience_dict['patience']
+        patience_counter = patience_dict['patience_counter']
+        # Create datasets from saved train valid test split
+        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations, chunk_size=1024)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, 0, chunk_size=1024)
+        print(f'Continuing training from epoch {start_epoch}\n')
 
+    model.to(device)#, dtype=torch.float16)
+
+    # Create dataloader
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+    valid_dataloader = DataLoader(
+        valid_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+
+    # Enable gradient checkpointing if wanted
     if gradient_checkpointing:
         model.gradient_checkpointing_enable()
         model.config.use_cache = False
 
+    # GradScaler for XPU
+    # scaler = torch.xpu.amp.GradScaler()
+
     # Log every 20 accumulated steps
     logging_interval = 5
     writer = SummaryWriter(log_dir=log_dir)
-    print(f'Logging to: {log_dir}\n')
-    print('Phi2 Config:', {k: model.config.to_dict()[k] for k in
-                           ['hidden_size', 'intermediate_size', 'num_hidden_layers', 'num_attention_heads']})
-    print(
-        f'Hyperparameters: lr={learning_rate}, batch_size={batch_size}, accumulation_steps={accumulation_steps}, num_warmup_steps={num_warmup_steps}\n')
+
+    print('--- Training Initiated with the following parameters ---')
+    for param, value in vars().items():
+        if param != 'config':
+            print(f"{param:<25}: {value}")
+    print('------------------------------------------------------')
+    # ... your training logic would start here ...
 
     # ===================
     # = Debugging model =
@@ -249,7 +331,6 @@ def train(
     # ======================
     # = Main training loop =
     # ======================
-
     print(f'Starting training for {num_epochs} epochs...')
     progress_bar = tqdm(initial=0, total=num_epochs * len(train_dataloader), desc='Training Progress')
     for epoch in range(start_epoch, start_epoch + num_epochs):
@@ -259,7 +340,7 @@ def train(
         accumulated_loss = 0.0
 
         for i, batch in enumerate(train_dataloader):
-            # Our dataset returns a tensor of size (16, 1024) of dtype int64 always...
+            # Our dataset returns a tensor of size (16, 1024) of dtype int64
             input_ids = batch[0].to(device).long()
 
             # Make a forward pass
@@ -338,6 +419,7 @@ def train(
                 # --- Per-Step Logging & Progress Bar ---
                 avg_accumulated_loss = accumulated_loss / accumulation_steps
                 total_train_loss += avg_accumulated_loss
+                accumulated_loss = 0.0
                 global_step += 1
                 progress_bar.update(accumulation_steps)
 
@@ -346,8 +428,6 @@ def train(
                     writer.add_scalar('Per-Step/Learning Rate', last_lr, global_step)
                     writer.add_scalar('Per-Step/Gradient Norm', total_norm, global_step)
                     progress_bar.set_postfix({'Loss': f'{detached_loss:.4f}', 'LR': f'{last_lr:.6f}'})
-
-                accumulated_loss = 0.0
 
                 if debug and flag:
                     raise Exception('Aborting due to non-finite values in gradient.')
@@ -410,11 +490,9 @@ def train(
 
         # Early stop
         if patience_counter >= patience:
-            # For testing we dont stop until we have reached our estimated amount of epochs
-            # print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
-            # writer.close()
-            # return True
-            pass
+            print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
+            writer.close()
+            return True
 
         if epoch >= num_estimated_epochs:
             # Stop at estimated epochs
@@ -424,100 +502,6 @@ def train(
     print('Training completed!')
     writer.close()
     return False
-
-
-MODEL_CONFIGURATIONS = {
-    'Phi-2_Small': {
-        'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
-            eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=256, intermediate_size=1024, num_hidden_layers=4,
-            num_attention_heads=4,
-            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
-        ),
-        'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 20, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Small',
-            'continue_from': 'Phi-2_Small_1',
-        }
-    },
-    'Phi-2_Medium': {
-        'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
-            eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=384, intermediate_size=1536, num_hidden_layers=6,
-            num_attention_heads=6,
-            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
-        ),
-        'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Medium',
-            'continue_from': 'Phi-2_Medium_1',
-        }
-    },
-    'Phi-2_Large': {
-        'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
-            eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=512, intermediate_size=2048, num_hidden_layers=8,
-            num_attention_heads=8,
-            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
-        ),
-        'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 30, 'modulation': 0, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Large',
-            'continue_from': 'Phi-2_Large_1',
-        }
-    },
-    'Phi-2_Small_da_6': {
-        'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
-            eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=256, intermediate_size=1024, num_hidden_layers=4,
-            num_attention_heads=4,
-            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
-        ),
-        'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 40, 'modulation': 6, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Small_da_6',
-            'continue_from': 'Phi-2_Small_da_6_1',
-        }
-    },
-    'Phi-2_Medium_da_6': {
-        'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
-            eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=384, intermediate_size=1536, num_hidden_layers=6,
-            num_attention_heads=6,
-            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
-        ),
-        'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 50, 'modulation': 6, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Medium_da_6',
-            'continue_from': 'Phi-2_Medium_da_6_1',
-        }
-    },
-    'Phi-2_Large_da_6': {
-        'config': PhiConfig(
-            vocab_size=EncodingConfig.vocab_size, pad_token_id=EncodingConfig.padding_token,
-            eos_token_id=EncodingConfig.end_note,
-            max_position_embeddings=1024, hidden_size=512, intermediate_size=2048, num_hidden_layers=8,
-            num_attention_heads=8,
-            tie_word_embeddings=True, layer_norm_eps=1e-5, rope_theta=10000.0, initializer_range=0.02,
-        ),
-        'hyperparameters': {
-            'num_epochs': 2, 'patience': 5, 'batch_size': 6, 'accumulation_steps': 1, 'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine', 'num_estimated_epochs': 60, 'modulation': 6, 'fit_dataset_in_ram': True,
-            'num_workers': 0, 'gradient_checkpointing': False, 'device': 'xpu', 'model_name': 'Phi-2_Large_da_6',
-            'continue_from': 'Phi-2_Large_da_6_1',
-        }
-    }
-}
 
 
 def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
@@ -591,56 +575,88 @@ if __name__ == '__main__':
 
     # --- Group arguments for better readability ---
     train_params = parser.add_argument_group('Training Parameters')
-    data_params = parser.add_argument_group('Dataset & Hardware Parameters')
+    data_params = parser.add_argument_group('Dataset Parameters')
+    hardware_params = parser.add_argument_group('Hardware Parameters')
     run_params = parser.add_argument_group('Run Management Parameters')
 
     # --- Training Parameters ---
     train_params.add_argument('--num_epochs', type=int, required=True,
                               help='Number of epochs for this training session.')
-    train_params.add_argument('--patience', type=int, default=4,
-                              help='Epochs to wait for validation loss improvement before stopping.')
-    train_params.add_argument('--batch_size', type=int, default=16,
-                              help='Batch size for training.')
+    train_params.add_argument('--batch_size', type=int, default=4,
+                              help='Number of samples per batch.')
     train_params.add_argument('--learning_rate', type=float, default=1e-4,
                               help='Initial learning rate for the optimizer.')
     train_params.add_argument('--lr_scheduler', type=str, default='cosine', choices=['cosine'],
                               help='Learning rate scheduler type.')
     train_params.add_argument('--num_estimated_epochs', type=int, default=100,
                               help='Total planned epochs for creating a consistent LR schedule.')
+    train_params.add_argument('--patience', type=int, default=4,
+                              help='Epochs to wait for validation loss improvement before stopping.')
+    train_params.add_argument('--accumulation_steps', type=int, default=4,
+                              help='Number of steps to accumulate gradients before an optimizer update.')
 
-    # --- Dataset & Hardware Parameters ---
-    data_params.add_argument('--modulation', type=int, default=0,
-                             help='Number of data augmentations (key modulations) per MIDI file.')
-    data_params.add_argument('--fit_dataset_in_ram', action='store_true',
-                             help='Load the entire dataset into RAM. Requires significant memory.')
-    data_params.add_argument('--gradient_checkpointing', action='store_true',
-                             help='Enable gradient checkpointing to save memory.')
-    data_params.add_argument('--device', type=str, default=None,
-                             help='Device to use: cpu, cuda, or xpu (auto-select if None).')
+    # --- Dataset Parameters ---
+    data_params.add_argument('--dataset_path', type=str,
+                             default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lpd_5'),
+                             help='Path to the root directory of the dataset.')
+    data_params.add_argument('--split_ratios', type=float, nargs=3, default=[0.8, 0.1, 0.1],
+                             metavar=('TRAIN', 'VALID', 'TEST'),
+                             help='Train, validation, and test split ratios (must sum to 1).')
+    data_params.add_argument('--n_modulations', type=int, default=0,
+                             help='Number of random pitch augmentations per sample.')
+    data_params.add_argument('--num_workers', type=int, default=0,
+                             help='Number of worker processes for data loading. Use -1 for all CPU cores.')
+    data_params.add_argument('--random_seed', type=int, default=42,
+                             help='Seed for random operations to ensure reproducibility.')
+
+    # --- Hardware Parameters ---
+    hardware_params.add_argument('--device', type=str, default=None,
+                                 help='Device to use: cpu, cuda, or xpu (auto-selects if None).')
+    hardware_params.add_argument('--gradient_checkpointing', action='store_true',
+                                 help='Enable gradient checkpointing to save memory at the cost of speed.')
+
+    # Mutually exclusive group for flash attention for clear on/off control
+    fa_group = hardware_params.add_mutually_exclusive_group()
+    fa_group.add_argument('--use-flash-attention', action='store_true', dest='flash_attention', default=True,
+                          help='Enable FlashAttention for faster training (default).')
+    fa_group.add_argument('--no-flash-attention', action='store_false', dest='flash_attention',
+                          help='Disable FlashAttention.')
 
     # --- Run Management Parameters ---
     run_params.add_argument('--model_name', type=str, default='Phi-2_Model',
                             help='Base name for the run and logging directory.')
-    run_params.add_argument('--continue_from', type=str, default=None,
-                            help='Name of the run directory (e.g., "Phi-2_Model_run1") to resume training from.')
+    run_params.add_argument('--runs_path', type=str,
+                            default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
+                            help='Directory to save model checkpoints and logs.')
+    run_params.add_argument('--debug', action='store_true',
+                            help='Run in debug mode with a small subset of data.')
     run_params.add_argument('--training_manager', action='store_true',
                             help='If specified, ignores other CLI arguments and runs a hardcoded training session.')
 
     args = parser.parse_args()
 
+    # --- Execute the appropriate function ---
     if args.training_manager:
         training_manager()
     else:
         # Pass all the relevant arguments to the train function
-        train(num_epochs=args.num_epochs,
-              patience=args.patience,
-              batch_size=args.batch_size,
-              learning_rate=args.learning_rate,
-              lr_scheduler=args.lr_scheduler,
-              num_estimated_epochs=args.num_estimated_epochs,
-              modulation=args.modulation,
-              fit_dataset_in_ram=args.fit_dataset_in_ram,
-              gradient_checkpointing=args.gradient_checkpointing,
-              device=args.device,
-              model_name=args.model_name,
-              continue_from=args.continue_from)
+        train(
+            num_epochs=args.num_epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            lr_scheduler=args.lr_scheduler,
+            num_estimated_epochs=args.num_estimated_epochs,
+            patience=args.patience,
+            accumulation_steps=args.accumulation_steps,
+            split_ratios=tuple(args.split_ratios),
+            dataset_path=args.dataset_path,
+            n_modulations=args.n_modulations,
+            num_workers=args.num_workers,
+            random_seed=args.random_seed,
+            flash_attention=args.flash_attention,
+            gradient_checkpointing=args.gradient_checkpointing,
+            device=args.device,
+            model_name=args.model_name,
+            runs_path=args.runs_path,
+            debug=args.debug
+        )

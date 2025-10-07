@@ -1,16 +1,15 @@
 import os
 import glob
-import argparse
 from tqdm import tqdm
 
 
 def verify_encoded_files(dataset_path: str):
-    '''
+    """
     Scans a dataset directory to count and compare the number of .npz files
     against their corresponding .npz.tmp encoded versions.
 
     This helps identify if any files were skipped during the encoding process.
-    '''
+    """
     print(f'Starting scan in: {dataset_path}')
 
     # Construct the search pattern for the original pianoroll files

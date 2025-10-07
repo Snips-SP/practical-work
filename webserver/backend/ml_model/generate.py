@@ -118,7 +118,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     total_steps = sum(timings)
 
     # Initialize context with special token and the first chord
-    context_sequence.append(EncodingConfig.end_note)
+    context_sequence.append(EncodingConfig.begin_note)
     context_sequence.extend(chord_tokens_queue.popleft())
 
     steps_in_current_chord = timings_queue.popleft()
