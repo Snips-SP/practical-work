@@ -192,10 +192,11 @@ class OnTheFlyMidiDataset(Dataset):
     A robust, on-the-fly MIDI dataloader with comprehensive error handling.
     """
 
-    def __init__(self, datafiles: list, n_modulations: int = 0, chunk_size: int = 1024):
+    def __init__(self, datafiles: list, padding_token: int, n_modulations: int = 0, chunk_size: int = 1024):
         self.base_filepaths = datafiles
         self._effective_chunk_size = chunk_size - 2
         self.chunk_size = chunk_size
+        self.padding_token = padding_token
 
         # All possible pitch shifts, excluding 0.
         possible_shifts = list(range(-5, 0)) + list(range(1, 7))
@@ -213,7 +214,11 @@ class OnTheFlyMidiDataset(Dataset):
     def __getitem__(self, idx):
         base_path = self.base_filepaths[idx]
         aug_value = random.choice(self.augmentation_range)
-        augmented_path = f'{base_path}.{aug_value}.tmp'
+
+        # Get path of the augmented file
+        path = os.path.dirname(base_path)
+        filename = os.path.splitext(os.path.basename(base_path))[0]
+        augmented_path = os.path.join(path, f'{filename}.{aug_value}.npy')
 
         # Handle loading errors
         try:
@@ -221,25 +226,46 @@ class OnTheFlyMidiDataset(Dataset):
             full_track = np.load(augmented_path).astype(np.int64)
         except (IOError, ValueError, EOFError):
             print(f'Warning: Cannot load file {augmented_path}. Skipping.')
-            return torch.zeros(self.chunk_size, dtype=torch.long), torch.zeros(self.chunk_size, dtype=torch.long)
+            # Return a tensor full of padding tokens and a mask full of 1s
+            tokens = torch.full((self.chunk_size,), self.padding_token, dtype=torch.long)
+            mask = torch.ones(self.chunk_size, dtype=torch.long)
+            return tokens, mask
 
         # Handle tracks that are too short
         if len(full_track) < self._effective_chunk_size:
-            print(f'Warning: Track {augmented_path} is too short ({len(full_track)} < {self.chunk_size}). Skipping.')
-            return torch.zeros(self.chunk_size, dtype=torch.long), torch.zeros(self.chunk_size, dtype=torch.long)
+            # Create the sequence with BOS and EOS
+            tokens = np.concatenate([
+                [EncodingConfig.begin_note],
+                full_track,
+                [EncodingConfig.end_note]
+            ]).astype(np.int64)
 
-        # If file is valid, select a random chunk
-        start_idx = random.randint(0, len(full_track) - self._effective_chunk_size)
-        tokens = full_track[start_idx: start_idx + self._effective_chunk_size]
+            seq_len = len(tokens)
+            pad_len = self.chunk_size - seq_len
 
-        # Prepend the BOS token and append the EOS token
-        tokens = np.concatenate([
-            [EncodingConfig.begin_note],
-            tokens,
-            [EncodingConfig.end_note]
-        ]).astype(np.int64)
+            # Create padding
+            padding_arr = np.full((pad_len,), self.padding_token, dtype=np.int64)
 
-        mask = np.ones_like(tokens, dtype=np.int64)
+            # Create final token sequence
+            tokens = np.concatenate([tokens, padding_arr])
 
-        return torch.from_numpy(tokens).long(), torch.from_numpy(mask).long()
+            # Create mask: 0 for real tokens, 1 for padding
+            mask = np.concatenate([np.zeros(seq_len, dtype=np.int64), np.ones(pad_len, dtype=np.int64)])
+        else:
+            # If file is valid, select a random chunk
+            start_idx = random.randint(0, len(full_track) - self._effective_chunk_size)
+            tokens = full_track[start_idx: start_idx + self._effective_chunk_size]
+
+            # Prepend the BOS token and append the EOS token
+            tokens = np.concatenate([
+                [EncodingConfig.begin_note],
+                tokens,
+                [EncodingConfig.end_note]
+            ]).astype(np.int64)
+
+            # Create mask: 0 for all real tokens (no padding in this case)
+            mask = np.zeros_like(tokens, dtype=np.int64)
+
+        # Convert to torch tensors
+        return torch.from_numpy(tokens).to(torch.long), torch.from_numpy(mask).to(torch.long)
 

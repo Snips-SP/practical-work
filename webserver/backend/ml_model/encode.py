@@ -289,7 +289,7 @@ class Runner:
 
             # Store the current sequence efficiently as uint16
             seq = np.array(seq, dtype=np.uint16)
-            np.save(file_path + f'.{s}.tmp', seq)
+            np.save(os.path.splitext(os.path.basename(filepath))[0] + f'.{s}', seq)
 
 
     # Use a wrapper if encoding a file delivers an exception

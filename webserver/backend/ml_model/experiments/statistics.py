@@ -17,6 +17,10 @@ import glob
 matplotlib.use('TkAgg')
 
 
+### TODO: Clean this up and create plots for the statistics
+# Create an average notes per bar statistic so we can see how many notes on average the network can have in memory
+
+
 def process_file(file_path):
     """Process a single file and return its statistics per track"""
     try:
