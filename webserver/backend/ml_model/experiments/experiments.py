@@ -150,5 +150,6 @@ def calculate_model_memory_usage():
 
 
 if __name__ == '__main__':
-    get_dataset_statistics_per_track()
+    pass
+    # get_dataset_statistics_per_track()
     # testing_generation_function(False, 'GPT2_Small_3')

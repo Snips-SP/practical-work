@@ -1,4 +1,7 @@
-from transformers import PhiConfig, PhiForCausalLM
+import json
+
+import numpy as np
+from transformers import PhiConfig, Phi3ForCausalLM
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
@@ -12,7 +15,7 @@ import os
 
 class EncodingConfig:
     """
-    EncodingConfig holds the token layout and helper mappings for notes, drums and microtiming tokens.
+    EncodingConfig holds the token layout and helper mappings for notes, drums, and microtiming tokens.
     Call EncodingConfig.initialize() once at startup to populate maps.
     """
 
@@ -31,7 +34,7 @@ class EncodingConfig:
     # The order of tracks in which they appear in the dataset
     midi_tracks: List[str] = ['Drums', 'Piano', 'Guitar', 'Bass', 'Strings']
     # The order we wish to encode the notes in (As string and as indices of midi_tracks)
-    encoding_order: List[str] = ['Bass', 'Piano', 'Guitar', 'Strings', 'Drums']
+    encoding_order: List[str] = ['Drums', 'Bass', 'Piano', 'Guitar', 'Strings']
     # [3, 1, 2, 4, 0]
     trc_idx: List[int] = None
 
@@ -50,6 +53,7 @@ class EncodingConfig:
     # Special tokens (filled during initialize)
     time_note: int = None
     end_note: int = None
+    begin_note: int = None
 
     # Drum pitches used in your dataset (sorted)
     drum_pitches: List[int] = [27, 28, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50,
@@ -103,6 +107,8 @@ class EncodingConfig:
         # Special tokens: time_note, end_note, padding
         cls.time_note = current
         current += 1
+        cls.begin_note = current
+        current += 1
         cls.end_note = current
         current += 1
         cls.padding_token = current
@@ -115,16 +121,32 @@ class EncodingConfig:
     @staticmethod
     def reorder_current(cur_seq):
         """
-        Reorder the sequence in one timestep so that melodic tokens always come first and are ordered accendingly.
+        Reorder the sequence in one timestep so we have Drums, Bass, Piano, Guitar, and Strings, efficiently in numpy.
         Assumes instruments are encoded in blocks of size EncodingConfig.note_size.
         """
-        # Stort melodic tokens in an accenting order
-        melodic_notes = [c for c in cur_seq if 0 <= c < EncodingConfig.instrument_bases['Drums']]
-        # Dont sort drum tokens, though, since microtiming tokens and special tokens depend on order
-        other_notes = [c for c in cur_seq if EncodingConfig.instrument_bases['Drums'] <= c < EncodingConfig.vocab_size]
+        # Convert the list to a NumPy array (one-time cost)
+        seq_arr = np.array(cur_seq)
 
-        # Sort each group to keep deterministic ordering
-        return sorted(melodic_notes) + other_notes
+        # Define the boundaries for clarity
+        drums_base = EncodingConfig.instrument_bases['Drums']
+        special_base = EncodingConfig.instrument_bases['Special']
+
+        # Create boolean masks to identify token types in a single pass
+        melodic_mask = seq_arr < drums_base
+        drum_mask = (seq_arr >= drums_base) & (seq_arr < special_base)
+        # The other mask can be inferred from the first two
+        other_mask = ~ (melodic_mask | drum_mask)
+
+        # Apply masks to get the sections. This is much faster than list comprehensions.
+        melodic_notes = seq_arr[melodic_mask]
+        drum_notes = seq_arr[drum_mask]
+        other_tokens = seq_arr[other_mask]
+
+        # Sort the melodic notes using NumPy's highly optimized sort
+        melodic_notes.sort()
+
+        # Concatenate the results and convert back to a list
+        return np.concatenate((drum_notes, melodic_notes, other_tokens)).tolist()
 
 
 EncodingConfig.initialize()
@@ -278,9 +300,6 @@ def load_latest_checkpoint(
     """
 
     # Validate inputs
-    if not os.path.exists(directory):
-        raise FileNotFoundError(f'Directory not found: {directory}')
-
     if not os.path.isdir(directory):
         raise NotADirectoryError(f'Not a directory: {directory}')
 
@@ -328,7 +347,7 @@ def load_latest_checkpoint(
 
     # Create model from config
     try:
-        model = PhiForCausalLM(config)
+        model = Phi3ForCausalLM(config)
         model.to(device)
     except Exception as e:
         raise ValueError(f'Failed to create PhiForCausalLM from config: {e}')
@@ -380,6 +399,22 @@ def load_latest_checkpoint(
         except Exception as e:
             raise ValueError(f'Failed to load learning rate scheduler state dict: {e}')
 
+    # ===================================
+    # = Load train valid and test split =
+    # ===================================
+    if os.path.isfile(os.path.join(directory, 'train_valid_test_split.json')):
+        with open(os.path.join(directory, 'train_valid_test_split.json'), 'r') as f:
+            train_valid_test_split = json.load(f)
+
+        train_files = train_valid_test_split['train_files']
+        valid_files = train_valid_test_split['valid_files']
+        test_files = train_valid_test_split['test_files']
+    else:
+        train_files = None
+        valid_files = None
+        test_files = None
+        print(f'Warning: "train_valid_test_split.json" file not found in {directory}.')
+
     # ==================================
     # = Extract training progress info =
     # ==================================
@@ -413,7 +448,7 @@ def load_latest_checkpoint(
         global_step = None
         print(f'Warning: "global_step" key not found in checkpoint.')
 
-    return model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, learning_rate_scheduler, learning_rate_scheduler_kwargs
+    return model, training_loss_per_epoch, validation_loss_per_epoch, patience_dict, start_epoch, global_step, optimizer, optimizer_kwargs, learning_rate_scheduler, learning_rate_scheduler_kwargs, train_files, valid_files, test_files
 
 
 def get_device(preferred: str = None) -> str:
@@ -445,37 +480,3 @@ def get_device(preferred: str = None) -> str:
         return 'cuda'
     else:
         return 'cpu'
-
-
-def get_next_run_folder(name, base_dir='runs'):
-    """Generates the next available run folder path with sequential numbering.
-
-        Scans the base directory for existing folders matching the pattern '{name}_{index}'
-        and returns a path for the next sequential run folder. Useful for organizing
-        experiment outputs without overwriting previous runs.
-
-        :param str name: Base name for the run folder (e.g., 'experiment', 'training').
-        :param str base_dir: Directory to search for existing runs, defaults to 'runs'.
-        :returns: Path to the next available run folder (e.g., 'runs/experiment_3').
-        :rtype: str
-    """
-    # List all folders in the base directory
-    existing_folders = os.listdir(base_dir)
-
-    # Regex to capture 'run_<index>' format
-    run_pattern = re.compile(fr'^{name}_(\d+)$')
-
-    # Find the highest index
-    max_index = 0
-    for folder in existing_folders:
-        match = run_pattern.match(folder)
-        if match:
-            # Extract the index from folder name
-            index = int(match.group(1))
-            max_index = max(max_index, index)
-
-    # Increase the index by 1 for the next run
-    new_run_name = f'{name}_{max_index + 1}'
-    new_run_path = os.path.join(base_dir, new_run_name)
-
-    return new_run_path

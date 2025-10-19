@@ -1,8 +1,12 @@
 import threading
-import os
 import glob
+import os
+import torch
 import numpy as np
+import random
+import pickle
 from torch.utils.data import Dataset
+from backend.ml_model.helper import EncodingConfig
 
 
 class MidiDataset(Dataset):
@@ -158,7 +162,6 @@ class MidiRAMDataset(Dataset):
             dataset_path (str): Path to the dataset directory.
             data (np.ndarray): Concatenated array containing all tokenized sequences.
     """
-
     def __init__(self, dataset_path):
         self.dataset_path = dataset_path
         self.data = []
@@ -183,3 +186,61 @@ class MidiRAMDataset(Dataset):
         # Entire mask is 1
         mask = np.ones(len(tokens), dtype=int)
         return tokens, mask
+
+
+class OnTheFlyMidiDataset(Dataset):
+    """
+    A robust, on-the-fly MIDI dataloader with comprehensive error handling.
+    """
+
+    def __init__(self, datafiles: list, n_modulations: int = 0, chunk_size: int = 1024):
+        self.base_filepaths = datafiles
+        self._effective_chunk_size = chunk_size - 2
+        self.chunk_size = chunk_size
+
+        # All possible pitch shifts, excluding 0.
+        possible_shifts = list(range(-5, 0)) + list(range(1, 7))
+
+        # Raise an exception if n_modulations is too high
+        if n_modulations > len(possible_shifts):
+            raise ValueError(f'Requested n_modulations ({n_modulations}) is larger than the number of available shifts ({len(possible_shifts)}).')
+
+        selected_shifts = random.sample(possible_shifts, n_modulations)
+        self.augmentation_range = [0] + selected_shifts
+
+    def __len__(self):
+        return len(self.base_filepaths)
+
+    def __getitem__(self, idx):
+        base_path = self.base_filepaths[idx]
+        aug_value = random.choice(self.augmentation_range)
+        augmented_path = f'{base_path}.{aug_value}.tmp'
+
+        # Handle loading errors
+        try:
+            with open(augmented_path, mode='rb') as f:
+                full_track = np.array(pickle.load(f), dtype=np.int64)
+        except (IOError, pickle.UnpicklingError, EOFError):
+            print(f'Warning: Cannot load file {augmented_path}. Skipping.')
+            return torch.zeros(self.chunk_size, dtype=torch.long), torch.zeros(self.chunk_size, dtype=torch.long)
+
+        # Handle tracks that are too short
+        if len(full_track) < self._effective_chunk_size:
+            print(f'Warning: Track {augmented_path} is too short ({len(full_track)} < {self.chunk_size}). Skipping.')
+            return torch.zeros(self.chunk_size, dtype=torch.long), torch.zeros(self.chunk_size, dtype=torch.long)
+
+        # If file is valid, select a random chunk
+        start_idx = random.randint(0, len(full_track) - self._effective_chunk_size)
+        tokens = full_track[start_idx: start_idx + self._effective_chunk_size]
+
+        # Prepend the BOS token and append the EOS token
+        tokens = np.concatenate([
+            [EncodingConfig.begin_note],
+            tokens,
+            [EncodingConfig.end_note]
+        ]).astype(np.int64)
+
+        mask = np.ones_like(tokens, dtype=np.int64)
+
+        return torch.from_numpy(tokens).long(), torch.from_numpy(mask).long()
+

@@ -1,7 +1,6 @@
 from backend.ml_model.generate import generate_from_chords
 from backend.ml_model.helper import mid_to_mp3
 from flask import Flask, render_template, jsonify, request
-from urllib.parse import quote
 import os.path
 import json
 import re

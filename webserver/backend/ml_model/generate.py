@@ -59,35 +59,6 @@ def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, s
 
 
 def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: str, output: str = 'output.mid', temperature=1, top_k=0, top_p=0.45):
-    """Generates a multitrack MIDI file from a sequence of chords.
-
-    This function is the heart of the music generation process. It loads a pre-trained
-    autoregressive model, encodes the input chord progression into tokens, and then
-    iteratively generates notes one at a time. The generated notes are assembled into
-    a piano roll, which is finally converted and saved as a MIDI file.
-
-    :param list chords: A list of chord strings (e.g., ['C', 'G', 'Am', 'F']).
-    :param list timings: A list of integers, where each integer specifies the
-                        duration of the corresponding chord in 1/16th notes.
-    :param int tempo: The tempo of the generated MIDI file in beats per minute (BPM).
-    :param str model_dir: The directory path containing the saved model state
-                          dictionary and configuration file.
-    :param str output: The file path where the output MIDI file will be saved.
-                       Defaults to 'output.mid'.
-    :param float temperature: The sampling temperature for token generation. A higher value results in higher random
-                        Defaults to 0.7.
-    :param int top_k: The number of top-k most likely tokens to consider at each
-                        Defaults to 0.
-    :param int top_p: The cumulative probability for top-p sampling.
-                        Defaults to 0.45.
-    :raises FileNotFoundError: If `model_dir` does not exist or if the required
-                               model and config files are not found within it.
-    :raises IndexError: If the number of chords does not match the number of
-                        timing durations, leading to an attempt to access a
-                        non-existent chord.
-    :returns: The file path of the generated MIDI file.
-    :rtype: str
-    """
     # Use appropriate xpu, cude or cpu device
     device = get_device('xpu')
 
@@ -118,7 +89,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     total_steps = sum(timings)
 
     # Initialize context with special token and the first chord
-    context_sequence.append(EncodingConfig.end_note)
+    context_sequence.append(EncodingConfig.begin_note)
     context_sequence.extend(chord_tokens_queue.popleft())
 
     steps_in_current_chord = timings_queue.popleft()

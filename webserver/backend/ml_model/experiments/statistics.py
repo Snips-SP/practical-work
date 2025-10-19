@@ -545,5 +545,3 @@ def get_drum_pitch_counts():
 
 if __name__ == '__main__':
     get_drum_pitch_counts()
-
-    ### TODO: Design a better encoding for the drums. Figure out why so many pitches are used and if we can save some dictionary space if some of them overlap

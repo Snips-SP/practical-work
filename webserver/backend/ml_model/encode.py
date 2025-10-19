@@ -252,7 +252,7 @@ class Runner:
                             continue
 
                         # Decide if we apply a shift of one octave downwards when modulating
-                        if cur_avg[track] + s < self.trc_avg[track] + 6:
+                        if self.trc_avg is None or cur_avg[track] + s < self.trc_avg[track] + 6:
                             shift = s
                         else:
                             shift = s - 12
@@ -281,7 +281,6 @@ class Runner:
 
             # Write all sequences to seq
             for _, sub_seq in seq_buffer:
-                sub_seq.append(EncodingConfig.end_note)
                 seq.extend(EncodingConfig.reorder_current(sub_seq))
 
             seq.append(EncodingConfig.end_note)
@@ -289,6 +288,7 @@ class Runner:
             # Store all the sequences, lists of tokens, as a pickle file
             with open(file_path + f'.{s}.tmp', mode='wb') as f:
                 pickle.dump(seq, f)
+
 
     # Use a wrapper if encoding a file delivers an exception
     def safe_run(self, file):
