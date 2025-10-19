@@ -145,6 +145,8 @@ class Runner:
                 range. Drum tracks (track index 1) are not pitch-shifted during augmentation.
                 All generated token sequences are saved to '{file_path}.{modulation}.tmp' for later chunking.
         """
+        if self.number_of_modulations > 11:
+            raise ValueError('Number of modulations cannot be greater than 11.')
         # If already have all the modulated tmp files and dont want to overwrite them we are done
         if len(list(glob.glob(os.path.join(os.path.dirname(file_path), '*.tmp')))) >= 12 and self.overwrite is False:
             return
@@ -285,9 +287,9 @@ class Runner:
 
             seq.append(EncodingConfig.end_note)
 
-            # Store all the sequences, lists of tokens, as a pickle file
-            with open(file_path + f'.{s}.tmp', mode='wb') as f:
-                pickle.dump(seq, f)
+            # Store the current sequence efficiently as uint16
+            seq = np.array(seq, dtype=np.uint16)
+            np.save(file_path + f'.{s}.tmp', seq)
 
 
     # Use a wrapper if encoding a file delivers an exception
@@ -322,7 +324,7 @@ def encode_dataset(
                             defaults to 'lpd_5'.
         :param int num_workers: Number of parallel processes to use for encoding,
                            defaults to 4.
-        :param int da: Applies da random pitch modulations to each track (from -5 to +6 semitones),
+        :param int da: Applies da random pitch modulations to each track (from -5 to +6 semitones) for a max of 11,
                       defaults to 5.
         :param int sequence_length: Length of individual token sequences to generate,
                                    defaults to 1024.
@@ -337,6 +339,9 @@ def encode_dataset(
                  track ordering information to the output directory.
         :rtype: None
     """
+    if da > 11:
+        raise ValueError('Number of modulations cannot be greater than 11.')
+
     if os.path.isdir(dataset):
         if os.path.basename(dataset) == 'lpd_5':
             dataset_path = os.path.join(dataset, 'lpd_5_cleansed/*/*/*/*/*.npz')

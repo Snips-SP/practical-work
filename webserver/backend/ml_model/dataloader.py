@@ -217,9 +217,9 @@ class OnTheFlyMidiDataset(Dataset):
 
         # Handle loading errors
         try:
-            with open(augmented_path, mode='rb') as f:
-                full_track = np.array(pickle.load(f), dtype=np.int64)
-        except (IOError, pickle.UnpicklingError, EOFError):
+            # It loads the uint16 data directly from the binary .npy file.
+            full_track = np.load(augmented_path).astype(np.int64)
+        except (IOError, ValueError, EOFError):
             print(f'Warning: Cannot load file {augmented_path}. Skipping.')
             return torch.zeros(self.chunk_size, dtype=torch.long), torch.zeros(self.chunk_size, dtype=torch.long)
 
