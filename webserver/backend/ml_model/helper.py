@@ -77,45 +77,41 @@ class EncodingConfig:
 
         cls.tokens = []
         cls.trc_idx = [cls.midi_tracks.index(track) for track in cls.encoding_order]
-        current = 0
+        current_token = 0
 
-        # Add melodic instrument blocks in the chosen order: Bass, Piano, Guitar, Strings
-        melodic_tracks = [t for t in cls.encoding_order if t != 'Drums']
-        for t in melodic_tracks:
-            cls.instrument_bases[t] = current
-            # just reserve the integer range; tokens will be 0..(vocab-1) anyway
-            current += cls.note_size
-
-        # Drums: custom per-pitch mapping (one token per pitch from drum_pitches_sorted)
-        cls.instrument_bases['Drums'] = current
-        start_drum = current
-        for i, midi_pitch in enumerate(cls.drum_pitches):
-            token_id = start_drum + i
-            cls.drum_pitch_to_token[midi_pitch] = token_id
-            cls.drum_token_to_pitch[token_id] = midi_pitch
-        current = start_drum + len(cls.drum_pitches)
+        # Drum tokens
+        cls.instrument_bases['Drums'] = current_token
+        for midi_pitch in cls.drum_pitches:
+            cls.drum_pitch_to_token[midi_pitch] = current_token
+            cls.drum_token_to_pitch[current_token] = midi_pitch
+            current_token += 1
 
         # Microtiming tokens
-        cls.instrument_bases['Microtimings'] = current
+        cls.instrument_bases['Microtimings'] = current_token
         for delta in cls.microtimings:
-            token_id = current
-            cls.microtiming_delta_to_token[delta] = token_id
-            cls.microtiming_token_to_delta[token_id] = delta
-            current += 1
+            cls.microtiming_delta_to_token[delta] = current_token
+            cls.microtiming_token_to_delta[current_token] = delta
+            current_token += 1
 
-        cls.instrument_bases['Special'] = current
+        # Add melodic instrument blocks in the chosen order: 'Bass', 'Piano', 'Guitar', 'Strings'
+        for t in [t for t in cls.encoding_order if t != 'Drums']:
+            cls.instrument_bases[t] = current_token
+            # just reserve the integer range; tokens will be 0..(vocab-1) anyway
+            current_token += cls.note_size
+
+        cls.instrument_bases['Special'] = current_token
         # Special tokens: time_note, end_note, padding
-        cls.time_note = current
-        current += 1
-        cls.begin_note = current
-        current += 1
-        cls.end_note = current
-        current += 1
-        cls.padding_token = current
-        current += 1
+        cls.time_note = current_token
+        current_token += 1
+        cls.begin_note = current_token
+        current_token += 1
+        cls.end_note = current_token
+        current_token += 1
+        cls.padding_token = current_token
+        current_token += 1
 
         # Final vocabulary size and token list
-        cls.vocab_size = current
+        cls.vocab_size = current_token
         cls.tokens = list(range(cls.vocab_size))
 
     @staticmethod
@@ -124,28 +120,26 @@ class EncodingConfig:
         Reorder the sequence in one timestep so we have Drums, Bass, Piano, Guitar, and Strings, efficiently in numpy.
         Assumes instruments are encoded in blocks of size EncodingConfig.note_size.
         """
-        # Convert the list to a NumPy array (one-time cost)
+        # Convert the list to a NumPy array
         seq_arr = np.array(cur_seq)
 
         # Define the boundaries for clarity
-        drums_base = EncodingConfig.instrument_bases['Drums']
+        bass_base = EncodingConfig.instrument_bases['Bass']
         special_base = EncodingConfig.instrument_bases['Special']
 
-        # Create boolean masks to identify token types in a single pass
-        melodic_mask = seq_arr < drums_base
-        drum_mask = (seq_arr >= drums_base) & (seq_arr < special_base)
+        # Create boolean masks to identify token from drums and micro tokens
+        drum_mask = seq_arr < bass_base
+        melodic_mask = (seq_arr >= bass_base) & (seq_arr < special_base)
         # The other mask can be inferred from the first two
         other_mask = ~ (melodic_mask | drum_mask)
 
-        # Apply masks to get the sections. This is much faster than list comprehensions.
+        # Apply masks to get the sections
         melodic_notes = seq_arr[melodic_mask]
         drum_notes = seq_arr[drum_mask]
         other_tokens = seq_arr[other_mask]
 
-        # Sort the melodic notes using NumPy's highly optimized sort
         melodic_notes.sort()
 
-        # Concatenate the results and convert back to a list
         return np.concatenate((drum_notes, melodic_notes, other_tokens)).tolist()
 
 
