@@ -58,7 +58,6 @@ class MidiDataset(Dataset):
         # Load chunk file paths and determine total length
         for file_number, file_path in enumerate(sorted(glob.glob(os.path.join(dataset_path, '*.npz')))):
             # Extract file number and map it to the file path
-            file_name = os.path.basename(file_path)  # e.g., '01' -> 1
             self.chunk_files[file_number] = file_path
 
             # Get chunk length
