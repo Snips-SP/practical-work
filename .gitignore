@@ -18,3 +18,7 @@
 /webserver/backend/ml_model/genre_charts/
 /webserver/backend/ml_model/runs/
 
+/__pycache__/
+/webserver/backend/__pycache__/
+/webserver/backend/ml_model/__pycache__/
+/webserver/backend/ml_model/experiments/__pycache__/
