@@ -192,7 +192,7 @@ class OnTheFlyMidiDataset(Dataset):
     A robust, on-the-fly MIDI dataloader with comprehensive error handling.
     """
 
-    def __init__(self, datafiles: list, padding_token: int, n_modulations: int = 0, chunk_size: int = 1024):
+    def __init__(self, datafiles: list, padding_token: int = EncodingConfig.padding_token, n_modulations: int = 0, chunk_size: int = 1024):
         self.base_filepaths = datafiles
         self._effective_chunk_size = chunk_size - 2
         self.chunk_size = chunk_size

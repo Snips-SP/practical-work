@@ -1,9 +1,8 @@
+from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
+from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset, OnTheFlyMidiDataset
 import glob
 import json
 import random
-
-from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
-from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset, OnTheFlyMidiDataset
 from torch.utils.data import DataLoader
 from transformers import get_scheduler, Phi3ForCausalLM, Phi3Config
 import torch
@@ -13,12 +12,8 @@ from tqdm import tqdm
 import argparse
 import math
 import os
+from typing import Tuple
 
-from typing import List, Tuple
-
-# Temp
-from datasets import load_dataset
-from transformers import AutoTokenizer, DataCollatorForLanguageModeling
 
 MODEL_CONFIGURATIONS = {
     'Phi-3-head-dim-64': {
@@ -34,15 +29,13 @@ MODEL_CONFIGURATIONS = {
             num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
 
             # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=2048,
+            max_position_embeddings=1024, # About 100 Bars
             rope_theta=10000.0,
             vocab_size=EncodingConfig.vocab_size,
             bos_token_id=EncodingConfig.begin_note,
             eos_token_id=EncodingConfig.end_note,
             pad_token_id=EncodingConfig.padding_token,
-            hidden_act='silu',
             initializer_range=0.02,
-            layer_norm_eps=1e-5,
             tie_word_embeddings=False,
         ),
 
@@ -55,10 +48,10 @@ MODEL_CONFIGURATIONS = {
             'patience': 5,
             'accumulation_steps': 1,
             'n_modulations': 11,
-            'num_workers': -1,  # Use all the workers
-            'attention_implementation': 'sdpa',
+            'num_workers': 2,  # Two are enough
+            'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
-            'compile_model': True,
+            'compile_model': False, ### TODO: Change to true and make it work
             'gradient_checkpointing': False,
             'device': 'xpu',
             'model_name': 'Phi-3-head-dim-64',
@@ -77,15 +70,13 @@ MODEL_CONFIGURATIONS = {
             num_key_value_heads=4,  # GQA ratio (16/4)
 
             # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=2048,
+            max_position_embeddings=1024, # About 100 Bars
             rope_theta=10000.0,
             vocab_size=EncodingConfig.vocab_size,
             bos_token_id=EncodingConfig.begin_note,
             eos_token_id=EncodingConfig.end_note,
             pad_token_id=EncodingConfig.padding_token,
-            hidden_act='silu',
             initializer_range=0.02,
-            layer_norm_eps=1e-5,
             tie_word_embeddings=False,
         ),
         'hyperparameters': {
@@ -97,10 +88,10 @@ MODEL_CONFIGURATIONS = {
             'patience': 5,
             'accumulation_steps': 1,
             'n_modulations': 11,
-            'num_workers': -1,  # Use all the workers
-            'attention_implementation': 'sdpa',
+            'num_workers': 2,  # Two are enough
+            'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
-            'compile_model': True,
+            'compile_model': False, ### TODO: Change to true and make it work
             'gradient_checkpointing': False,
             'device': 'xpu',
             'model_name': 'Phi-3-head-dim-32',
@@ -122,17 +113,14 @@ class NetworkConfig:
         num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
 
         # --- Standard parameters for a Phi-3 model ---
-        max_position_embeddings=2048,
+        max_position_embeddings=1024, # About 100 Bars
         rope_theta=10000.0,
         vocab_size=EncodingConfig.vocab_size,
         bos_token_id=EncodingConfig.begin_note,
         eos_token_id=EncodingConfig.end_note,
         pad_token_id=EncodingConfig.padding_token,
-        hidden_act='silu',
         initializer_range=0.02,
-        layer_norm_eps=1e-5,
         tie_word_embeddings=False,
-        _attn_implementation='sdpa'
     )
 
 
@@ -155,7 +143,7 @@ def train(
         accumulation_steps: int = 4,
         gradient_checkpointing: bool = False,
         device: str = None,
-        model_dtype=torch.bfloat16,
+        model_dtype='bfloat16',
         compile_model: bool = False,
 
         # Other parameters
@@ -165,6 +153,16 @@ def train(
         debug: bool = False,
 ):
     torch.autograd.set_detect_anomaly(debug)
+
+    if model_dtype == 'float32':
+        model_dtype = torch.float32
+    elif model_dtype == 'bfloat16':
+        model_dtype = torch.bfloat16
+    elif model_dtype == 'float16':
+        model_dtype = torch.float16
+    else:
+        raise ValueError(f'Invalid dtype: {model_dtype}')
+
     device = get_device(device)
     print(f'Using device: {device}\n')
 
@@ -211,8 +209,8 @@ def train(
                 'test': test_files
             }, f, indent=4)
 
-        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations, chunk_size=1024)
-        valid_dataset = OnTheFlyMidiDataset(valid_files, 0, chunk_size=1024)
+        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations=n_modulations, chunk_size=1024)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, n_modulations=0, chunk_size=1024)
 
         print('Training from scratch.')
         if config is None:
@@ -221,18 +219,14 @@ def train(
         else:
             print('Using provided config.\n')
 
-        # Initializing model weights is done automatically by providing initializer_range=0.02 in the config
-        config.initializer_range = 0.02
-
         # Turn on flash attention or sdpa if wanted
-        if device == 'cuda' and (attention_implementation == 'flash_attention_2' or attention_implementation == 'sdpa'):
-            config._attn_implementation = attention_implementation
-        elif device == 'xpu' and attention_implementation == 'sdpa':
-            config._attn_implementation = attention_implementation
-        else:
-            raise ValueError(f'Invalid attention implementation {attention_implementation} for device {device}.')
-
-        # Set the attention implementation
+        if attention_implementation != 'eager':
+            if device == 'cuda' and (attention_implementation == 'flash_attention_2' or attention_implementation == 'sdpa'):
+                config._attn_implementation = attention_implementation
+            elif device == 'xpu' and attention_implementation == 'sdpa':
+                config._attn_implementation = attention_implementation
+            else:
+                raise ValueError(f'Invalid attention implementation {attention_implementation} for device {device}.')
 
         # Create a model from config
         model = Phi3ForCausalLM(config)
@@ -269,8 +263,8 @@ def train(
         patience = patience_dict['patience']
         patience_counter = patience_dict['patience_counter']
         # Create datasets from saved train valid test split
-        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations, chunk_size=1024)
-        valid_dataset = OnTheFlyMidiDataset(valid_files, 0, chunk_size=1024)
+        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations=n_modulations, chunk_size=1024)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, n_modulations=0, chunk_size=1024)
         print(f'Continuing training from epoch {start_epoch}\n')
 
     model.to(device, dtype=model_dtype)
@@ -303,12 +297,6 @@ def train(
     # Log every 20 accumulated steps
     logging_interval = 5
     writer = SummaryWriter(log_dir=log_dir)
-
-    print('--- Training Initiated with the following parameters ---')
-    for param, value in vars().items():
-        if param != 'config':
-            print(f"{param:<25}: {value}")
-    print('------------------------------------------------------')
 
     # ===================
     # = Debugging model =
@@ -664,15 +652,6 @@ if __name__ == '__main__':
     if args.training_manager:
         training_manager()
     else:
-        if args.dtype == 'float32':
-            dtype = torch.float32
-        elif args.dtype == 'bfloat16':
-            dtype = torch.bfloat16
-        elif args.dtype == 'float16':
-            dtype = torch.float16
-        else:
-            raise ValueError(f'Invalid dtype: {args.dtype}')
-
         # Pass all the relevant arguments to the train function
         train(
             num_epochs=args.num_epochs,
