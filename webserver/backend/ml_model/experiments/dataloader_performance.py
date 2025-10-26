@@ -6,33 +6,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 from backend.ml_model.dataloader import OnTheFlyMidiDataset
+from backend.ml_model.helper import EncodingConfig
 from torch.utils.data import DataLoader
-
-
-def verify_encoded_files():
-    # Change the working directory to the script's directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(script_dir)
-    dataset_path = '../lpd_5'
-
-    print(f'Starting scan in: {dataset_path}')
-
-    # Construct the search pattern for the original pianoroll files
-    original_npz_files = glob.glob(os.path.join(dataset_path, 'lpd_5_cleansed/*/*/*/*/*.npz'))
-
-    missing_tmp_files = []
-    # Iterate through the found .npz files and check for their .npy counterparts
-    for npz_path in tqdm(original_npz_files, desc='Verifying encoded files'):
-        path_name = os.path.dirname(npz_path)
-        filename = os.path.splitext(os.path.basename(npz_path))[0]
-
-        for i in range(-5, 7):
-            tmp_file_name = f'{filename}.{i}.npy'
-
-            if not os.path.exists(os.path.join(dataset_path, path_name, tmp_file_name)):
-                missing_tmp_files.append(os.path.join(dataset_path, path_name, tmp_file_name))
-
-    print(f'Found {len(missing_tmp_files)} missing files')
 
 
 def dataset_loading_times():

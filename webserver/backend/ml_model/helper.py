@@ -5,7 +5,7 @@ from transformers import PhiConfig, Phi3ForCausalLM
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import tempfile
 import uuid
 import subprocess
@@ -63,8 +63,10 @@ class EncodingConfig:
     # Microtiming definitions: (delta in steps)
     microtimings: List[int] = [-2, -1, 1, 2, 3]
 
-    # Mappings filled at initialize
-    instrument_bases: Dict[str, int] = {}
+    # Mappings filled at initializing
+    # Intervals for Drums, Microtiming, Drum+Micro, Melodic, Bass, Guitar, String, Piano and Special.
+    # interval[0] <= instrument tokens <= interval[1]
+    instrument_intervals: Dict[str, Tuple[int, int]] = {}
     drum_pitch_to_token: Dict[int, int] = {}
     drum_token_to_pitch: Dict[int, int] = {}
     microtiming_delta_to_token: Dict[int, int] = {}
@@ -80,26 +82,32 @@ class EncodingConfig:
         current_token = 0
 
         # Drum tokens
-        cls.instrument_bases['Drums'] = current_token
+        drum_base = current_token
         for midi_pitch in cls.drum_pitches:
             cls.drum_pitch_to_token[midi_pitch] = current_token
             cls.drum_token_to_pitch[current_token] = midi_pitch
             current_token += 1
+        cls.instrument_intervals['Drums'] = (drum_base, current_token-1)
 
         # Microtiming tokens
-        cls.instrument_bases['Microtimings'] = current_token
+        microtiming_base = current_token
         for delta in cls.microtimings:
             cls.microtiming_delta_to_token[delta] = current_token
             cls.microtiming_token_to_delta[current_token] = delta
             current_token += 1
+        cls.instrument_intervals['Microtimings'] = (microtiming_base, current_token-1)
+        cls.instrument_intervals['Drum+Micro'] = (drum_base, current_token - 1)
 
         # Add melodic instrument blocks in the chosen order: 'Bass', 'Piano', 'Guitar', 'Strings'
+        melodic_base = current_token
         for t in [t for t in cls.encoding_order if t != 'Drums']:
-            cls.instrument_bases[t] = current_token
+            instrument_base = current_token
             # just reserve the integer range; tokens will be 0..(vocab-1) anyway
             current_token += cls.note_size
+            cls.instrument_intervals[t] = (instrument_base, current_token-1)
+        cls.instrument_intervals['Melodic'] = (melodic_base, current_token-1)
 
-        cls.instrument_bases['Special'] = current_token
+        instrument_base = current_token
         # Special tokens: time_note, end_note, padding
         cls.time_note = current_token
         current_token += 1
@@ -109,6 +117,7 @@ class EncodingConfig:
         current_token += 1
         cls.padding_token = current_token
         current_token += 1
+        cls.instrument_intervals['Special'] = (instrument_base, current_token-1)
 
         # Final vocabulary size and token list
         cls.vocab_size = current_token
@@ -124,12 +133,12 @@ class EncodingConfig:
         seq_arr = np.array(cur_seq)
 
         # Define the boundaries for clarity
-        bass_base = EncodingConfig.instrument_bases['Bass']
-        special_base = EncodingConfig.instrument_bases['Special']
+        drum_interval = EncodingConfig.instrument_intervals['Drum+Micro']
+        melodic_interval = EncodingConfig.instrument_intervals['Melodic']
 
         # Create boolean masks to identify token from drums and micro tokens
-        drum_mask = seq_arr < bass_base
-        melodic_mask = (seq_arr >= bass_base) & (seq_arr < special_base)
+        drum_mask = (drum_interval[0] <= seq_arr) & (seq_arr <= drum_interval[1])
+        melodic_mask = (melodic_interval[0] <= seq_arr) & (seq_arr <= melodic_interval[1])
         # The other mask can be inferred from the first two
         other_mask = ~ (melodic_mask | drum_mask)
 

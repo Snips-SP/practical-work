@@ -1,3 +1,5 @@
+import shutil
+
 from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
 from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset, OnTheFlyMidiDataset
 import glob
@@ -51,7 +53,8 @@ MODEL_CONFIGURATIONS = {
             'num_workers': 2,  # Two are enough
             'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
-            'compile_model': False, ### TODO: Change to true and make it work
+            'compile_model': True, ### TODO: Change to true and make it work
+            ### Aggregate epochs into checkpoints
             'gradient_checkpointing': False,
             'device': 'xpu',
             'model_name': 'Phi-3-head-dim-64',
@@ -91,7 +94,7 @@ MODEL_CONFIGURATIONS = {
             'num_workers': 2,  # Two are enough
             'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
-            'compile_model': False, ### TODO: Change to true and make it work
+            'compile_model': True, ### TODO: Change to true and make it work
             'gradient_checkpointing': False,
             'device': 'xpu',
             'model_name': 'Phi-3-head-dim-32',
@@ -139,7 +142,7 @@ def train(
         random_seed: int = 42,
 
         # Hardware related parameters
-        attention_implementation: str = 'sdpa',
+        attention_implementation: str = 'eager',
         accumulation_steps: int = 4,
         gradient_checkpointing: bool = False,
         device: str = None,
@@ -356,13 +359,22 @@ def train(
         total_train_loss = 0.0
         accumulated_loss = 0.0
 
-        for i, batch in enumerate(train_dataloader):
+        for i, (input_ids, attention_mask) in enumerate(train_dataloader):
             # Our dataset returns a tensor of size (16, 1024) of dtype int64
-            input_ids = batch[0].to(device)
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+            print('input shape: ', input_ids.shape)
+            print('input max token: ', input_ids.max())
+            print('input min token: ', input_ids.min())
+            print('vocab size: ', EncodingConfig.vocab_size)
 
             # Make a forward pass
             # The model will automatically shift the labels and calculate the loss
-            outputs = model(input_ids=input_ids, labels=input_ids)
+            outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=input_ids
+                )
 
             # The loss is already calculated and available in the output object
             loss = outputs.loss
@@ -647,6 +659,10 @@ if __name__ == '__main__':
                             help='If specified, ignores other CLI arguments and runs a hardcoded training session.')
 
     args = parser.parse_args()
+
+
+    ### TODO Remove this. Its only for debugging an running many quick runs in succession:
+    shutil.rmtree(r'C:\Users\mbrun\Documents\University_Branche\Project\webserver\backend\ml_model\runs\Phi-3-head-dim-64')
 
     # --- Execute the appropriate function ---
     if args.training_manager:

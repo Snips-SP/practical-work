@@ -100,12 +100,19 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     # Create an empty pianoroll array with resolution 24
     pianoroll = np.zeros((len(EncodingConfig.encoding_order), total_steps * step, 128))
 
+    melodic_interval = EncodingConfig.instrument_intervals['Melodic']
+    drum_interval = EncodingConfig.instrument_intervals['Drums']
+    bass_interval = EncodingConfig.instrument_intervals['Bass']
+    guitar_interval = EncodingConfig.instrument_intervals['Guitar']
+    strings_interval = EncodingConfig.instrument_intervals['Strings']
+    piano_interval = EncodingConfig.instrument_intervals['Piano']
+
     current_tick = 0
     i = 0
     # Decode it again
     with torch.no_grad(), trange(total_steps) as progress_bar:
         # Prevent infinite loop
-        while i <= 10_000:
+        while i <= 100_000:
             i += 1
             # If the queue is empty, create new tokens
             if not generated_sequence_cache:
@@ -141,20 +148,27 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                 if current_tick >= pianoroll.shape[1]:
                     break
             else:
-                if note < EncodingConfig.instrument_bases['Drums']:
+                if melodic_interval[0] <= note <= melodic_interval[1]:
                     # It is a melodic note
+                    if bass_interval[0] <= note <= bass_interval[1]:
+                        track = 'Bass'
+                    elif guitar_interval[0] <= note <= guitar_interval[1]:
+                        track = 'Guitar'
+                    elif strings_interval[0] <= note <= strings_interval[1]:
+                        track = 'Strings'
+                    elif piano_interval[0] <= note <= piano_interval[1]:
+                        track = 'Piano'
+                    else:
+                        raise ValueError('Note not in melodic range')
 
-                    # Calculate the trc the note belongs to
-                    # 0 = Bass -> 3 = Bass
-                    # 1 = Piano -> 1 = Piano
-                    # 2 = Guitar -> 2 = Guitar
-                    # 3 = String -> 4 Strings
-                    trc = EncodingConfig.trc_idx[note // EncodingConfig.note_size]
                     # Calculate the midi note value
-                    midi_value = note % EncodingConfig.note_size + EncodingConfig.note_offset
+                    midi_value = note + EncodingConfig.note_offset - (EncodingConfig.instrument_intervals[track][0] - 1)
+                    trc_index = EncodingConfig.encoding_order.index(track)
+
                     # Position is normal since melodic notes can only be placed on steps of 6
-                    pianoroll[trc, current_tick:min(pianoroll.shape[1] - 1, current_tick + step), midi_value] = 100
-                elif note < EncodingConfig.instrument_bases['Microtimings']:
+                    pianoroll[
+                        trc_index, current_tick:min(pianoroll.shape[1] - 1, current_tick + step), midi_value] = 100
+                elif drum_interval[0] <= note <= drum_interval[1]:
                     # It is a drum note
                     trc = EncodingConfig.midi_tracks.index('Drums')
                     midi_value = EncodingConfig.drum_token_to_pitch[note]
@@ -166,8 +180,8 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                         new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p)
                         generated_sequence_cache.extend(new_tokens)
 
-                    if EncodingConfig.instrument_bases['Microtimings'] <= generated_sequence_cache[0] < \
-                            EncodingConfig.instrument_bases['Special']:
+                    microtiming_interval = EncodingConfig.instrument_intervals['Microtimings']
+                    if microtiming_interval[0] <= generated_sequence_cache[0] <= microtiming_interval[1]:
                         # It is a microtiming, so we have to adjust the position by the offset
                         microtiming = generated_sequence_cache.popleft()
                         # Update the context sequence
@@ -180,22 +194,16 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                     else:
                         # It is not a microtiming but some other note, which means we do not have an offset
                         pianoroll[trc, current_tick, midi_value] = 100
-
-                elif note < EncodingConfig.instrument_bases['Special']:
-                    # It is a Microtimings token. They should not appear on their own. Only paired with drum tokens
-                    # where they should always be filtered out by the above function
-                    print(f'Microtimings token found: {note}')
-                    raise ValueError('Microtimings token found')
                 else:
-                    # It is either padding or and end note
+                    # Its a different note we can ignore end_note, padding_token, or microtiming
                     continue
 
-    if i >= 10_000:
+    if i >= 100_000:
         print(f'Maximum number of iterations reached. Terminated.')
 
     # MIDI conversion
     pr = []
-    for i, t in enumerate(EncodingConfig.midi_tracks):
+    for i, t in enumerate(EncodingConfig.encoding_order):
         pr.append(pypianoroll.StandardTrack(
             pianoroll=pianoroll[i],
             program=EncodingConfig.programs[t],
