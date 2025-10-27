@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 def dataset_loading_times():
     batch_size = 32
-    num_workers_list = [0, 1]
+    num_workers_list = [0, 1, 4, 8, 12, 16]
     results_filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'plots', 'dataloader_benchmarks')
 
     if not os.path.exists(f'{results_filepath}.pkl'):

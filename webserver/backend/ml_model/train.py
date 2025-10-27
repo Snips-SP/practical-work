@@ -10,6 +10,7 @@ from transformers import get_scheduler, Phi3ForCausalLM, Phi3Config
 import torch
 from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
+from torchinfo import summary
 from tqdm import tqdm
 import argparse
 import math
@@ -29,10 +30,17 @@ MODEL_CONFIGURATIONS = {
             # --- Attention: Using a head_dim of 64 ---
             num_attention_heads=8,  # Derived from hidden_size / 64
             num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
+            # This is the number of key_value heads that should be used to implement Grouped Query Attention.
+            # If num_key_value_heads=num_attention_heads, the model will use Multi Head Attention (MHA),
+            # if num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used.
+
+            # -- Advanced hyperparameters --
+            hidden_act='silu',
+            partial_rotary_factor=1.0,
+            # Percentage of the query and keys which will have rotary embedding.
 
             # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=1024, # About 100 Bars
-            rope_theta=10000.0,
+            max_position_embeddings=2048,
             vocab_size=EncodingConfig.vocab_size,
             bos_token_id=EncodingConfig.begin_note,
             eos_token_id=EncodingConfig.end_note,
@@ -43,18 +51,17 @@ MODEL_CONFIGURATIONS = {
 
         'hyperparameters': {
             'num_epochs': 2,
-            'batch_size': 6,
+            'batch_size': 16,
             'learning_rate': 5e-4,
             'lr_scheduler': 'cosine',
             'num_estimated_epochs': 50, ### TODO: Find right amount of estimated epochs
             'patience': 5,
             'accumulation_steps': 1,
             'n_modulations': 11,
-            'num_workers': 2,  # Two are enough
+            'num_workers': 8,
             'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
-            'compile_model': True, ### TODO: Change to true and make it work
-            ### Aggregate epochs into checkpoints
+            'compile_model': True,
             'gradient_checkpointing': False,
             'device': 'xpu',
             'model_name': 'Phi-3-head-dim-64',
@@ -73,8 +80,7 @@ MODEL_CONFIGURATIONS = {
             num_key_value_heads=4,  # GQA ratio (16/4)
 
             # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=1024, # About 100 Bars
-            rope_theta=10000.0,
+            max_position_embeddings=2048,
             vocab_size=EncodingConfig.vocab_size,
             bos_token_id=EncodingConfig.begin_note,
             eos_token_id=EncodingConfig.end_note,
@@ -91,10 +97,10 @@ MODEL_CONFIGURATIONS = {
             'patience': 5,
             'accumulation_steps': 1,
             'n_modulations': 11,
-            'num_workers': 2,  # Two are enough
+            'num_workers': 8,
             'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
-            'compile_model': True, ### TODO: Change to true and make it work
+            'compile_model': True,
             'gradient_checkpointing': False,
             'device': 'xpu',
             'model_name': 'Phi-3-head-dim-32',
@@ -116,7 +122,7 @@ class NetworkConfig:
         num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
 
         # --- Standard parameters for a Phi-3 model ---
-        max_position_embeddings=1024, # About 100 Bars
+        max_position_embeddings=1024,
         rope_theta=10000.0,
         vocab_size=EncodingConfig.vocab_size,
         bos_token_id=EncodingConfig.begin_note,
@@ -151,6 +157,7 @@ def train(
 
         # Other parameters
         model_name: str = 'Phi-2_Model',
+        checkpointing_per_epochs: int = 10,
         runs_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
         config=None,
         debug: bool = False,
@@ -212,8 +219,8 @@ def train(
                 'test': test_files
             }, f, indent=4)
 
-        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations=n_modulations, chunk_size=1024)
-        valid_dataset = OnTheFlyMidiDataset(valid_files, n_modulations=0, chunk_size=1024)
+        train_dataset = OnTheFlyMidiDataset(train_files, encodingConfig=EncodingConfig, n_modulations=n_modulations, chunk_size=1024)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, encodingConfig=EncodingConfig, n_modulations=0, chunk_size=1024)
 
         print('Training from scratch.')
         if config is None:
@@ -266,14 +273,21 @@ def train(
         patience = patience_dict['patience']
         patience_counter = patience_dict['patience_counter']
         # Create datasets from saved train valid test split
-        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations=n_modulations, chunk_size=1024)
-        valid_dataset = OnTheFlyMidiDataset(valid_files, n_modulations=0, chunk_size=1024)
+        train_dataset = OnTheFlyMidiDataset(train_files, encodingConfig=EncodingConfig, n_modulations=n_modulations, chunk_size=1024)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, encodingConfig=EncodingConfig, n_modulations=0, chunk_size=1024)
         print(f'Continuing training from epoch {start_epoch}\n')
 
     model.to(device, dtype=model_dtype)
 
+    # summary(model,
+    #         input_data=torch.randint(0, 100, (batch_size, 1024), device=device),
+    #         col_names=['input_size', 'output_size', 'num_params', 'mult_adds'],
+    #         depth=10
+    #         )
+    # exit()
     # Compile the model to use graph like representation
     if compile_model:
+        print('Compiling model...')
         model = torch.compile(model)
 
     # Enable gradient checkpointing
@@ -363,10 +377,6 @@ def train(
             # Our dataset returns a tensor of size (16, 1024) of dtype int64
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
-            print('input shape: ', input_ids.shape)
-            print('input max token: ', input_ids.max())
-            print('input min token: ', input_ids.min())
-            print('vocab size: ', EncodingConfig.vocab_size)
 
             # Make a forward pass
             # The model will automatically shift the labels and calculate the loss
@@ -487,27 +497,29 @@ def train(
         else:
             patience_counter += 1
 
-        # --- Checkpointing ---
-        checkpoint_data = {
-            'epoch': epoch,
-            'training_loss_per_epoch': training_loss_per_epoch,
-            'validation_loss_per_epoch': validation_loss_per_epoch,
-            'patience': {
-                'patience': patience,
-                'patience_counter': patience_counter
-            },
-            'global_step': global_step,
-            'model_state_dict': model.state_dict(),
-            'config': model.config.to_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'optimizer_kwargs': optimizer_kwargs,
-            'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
-            'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
-        }
-        torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
-        if best_model:
-            # Save as current as the best model
-            torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
+        # Make a checkpoint every few epochs or when we aboard due to early stopping or if its the last epoch
+        if epoch % checkpointing_per_epochs == 0 or patience_counter >= patience or epoch + 1 >= start_epoch + num_epochs:
+            # --- Checkpointing ---
+            checkpoint_data = {
+                'epoch': epoch,
+                'training_loss_per_epoch': training_loss_per_epoch,
+                'validation_loss_per_epoch': validation_loss_per_epoch,
+                'patience': {
+                    'patience': patience,
+                    'patience_counter': patience_counter
+                },
+                'global_step': global_step,
+                'model_state_dict': model.state_dict(),
+                'config': model.config.to_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'optimizer_kwargs': optimizer_kwargs,
+                'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
+            }
+            torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
+            if best_model:
+                # Save as current best model
+                torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
 
         # Early stop
         if patience_counter >= patience:
@@ -525,7 +537,7 @@ def train(
     return False
 
 
-def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
+def training_manager(epochs_per_session=10, progress_file='runs/progress.json'):
     """
     Manages the training schedule by automatically selecting and training
     the model with the fewest completed epochs.
@@ -683,7 +695,7 @@ if __name__ == '__main__':
             num_workers=args.num_workers,
             random_seed=args.random_seed,
             attention_implementation=args.attention_implementation,
-            model_dtype=dtype,
+            model_dtype=args.dtype,
             compile_model=args.compile,
             gradient_checkpointing=args.gradient_checkpointing,
             device=args.device,

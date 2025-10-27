@@ -1,14 +1,11 @@
 import threading
 import glob
 import os
-
 import pypianoroll
 import torch
 import numpy as np
 import random
-import pickle
 from torch.utils.data import Dataset
-from backend.ml_model.helper import EncodingConfig
 
 
 class MidiDataset(Dataset):
@@ -189,14 +186,13 @@ class MidiRAMDataset(Dataset):
         return tokens, mask
 
 
-### TODO: Think about using microtimings for all the instruments
-### TODO: Check the dataloader performance bevor that. If the performance is low we will have to rethink but I dont think this will be the case
 class OnTheFlyMidiDataset(Dataset):
     """
     On-the-fly MIDI dataloader
     """
 
-    def __init__(self, datafiles: list, n_modulations: int = 0, chunk_size: int = 1024):
+    def __init__(self, datafiles: list, encodingConfig, n_modulations: int = 0, chunk_size: int = 1024):
+        self.encodingConfig = encodingConfig
         self.filepaths = datafiles
         self._effective_chunk_size = chunk_size - 2
         self.chunk_size = chunk_size
@@ -214,9 +210,41 @@ class OnTheFlyMidiDataset(Dataset):
     def __len__(self):
         return len(self.filepaths)
 
+
+    def load_midi_to_array(self, file_path: str):
+        archive = np.load(file_path)
+
+        info = archive['info']
+        beat_resolution = info['beat_resolution']
+
+        array = []
+
+        for key in info.keys():
+            if key != 'name' and key != 'beat_resolution':
+                track_info = info[key]
+                track_index = int(key)
+
+                ### TODO: Finish this loading using the encoding config
+                # We need to get the right arrays from the archive, probably 'pianoroll_{index}_csc_data'
+                # Then put them into the right order which is defined in encoding config
+                # Then compare them with m = pypianoroll.load(file_path); pr = m.stack()
+
+
+
+
+# b'{"name": "b0493abb18a9b7da99cf3ac222b2c41d", "1": {"is_drum": false, "program": 0, "name": "Piano"}, "0": {"is_drum": true, "program": 0, "name": "Drums"}, "3": {"is_drum": false, "program": 32, "name": "Bass"}, "2": {"is_drum": false, "program": 24, "name": "Guitar"}, "4": {"is_drum": false, "program": 48, "name": "Strings"}, "beat_resolution": 24}'
+
     def encode_midi(self, file_path: str, aug_value):
         # Load it as a multitrack object
         m = pypianoroll.load(file_path)
+        ### TODO: Figure out if we can just load the file as an numpy array to remove overhead from the pypianoroll library
+
+        # https://hermandong.com/pypianoroll/doc.html#pypianoroll.read
+        # https://hermandong.com/pypianoroll/_modules/pypianoroll/inputs.html#load
+        # https://hermandong.com/pypianoroll/_modules/pypianoroll/inputs.html#read
+
+
+
         # Beat resolution is the number of steps a measure is divided into
         # Calculate how many time steps a quarter note takes to fill a measure
         step = m.resolution // 4
@@ -225,10 +253,10 @@ class OnTheFlyMidiDataset(Dataset):
         # Transpose the array to have shape (num_time_steps, num_pitches, num_tracks)
         pr = np.transpose(pr, (1, 2, 0))
         # Change ordering to get consistent indexing
-        pr = pr[:, :, EncodingConfig.trc_idx]
+        pr = pr[:, :, self.encodingConfig.trc_idx]
 
         # Init token list with bos token
-        tokens = [EncodingConfig.begin_note]
+        tokens = [self.encodingConfig.begin_note]
 
         # Chose a random starting tick in the sequence
         tick = random.randint(0, pr.shape[0])
@@ -243,14 +271,16 @@ class OnTheFlyMidiDataset(Dataset):
         while tick < pr.shape[0]:
             # Update our valid positions
             if tick % step == 0 and tick != 0:
-                # We have advanced to the next valid sixteenth note,
-                # thus we rotate out the last sequence and write it to seq
-                _, last_seq = seq_buffer[0]
-                last_seq.append(EncodingConfig.time_note)
-                tokens.extend(EncodingConfig.reorder_current(last_seq))
-                # Remove the last sequence and add new next sequence
-                seq_buffer.pop(0)
-                seq_buffer.append((tick + step, []))
+                # Handle the edge case where both buffers are going to be the same
+                if not tick + step == seq_buffer[1][0]:
+                    # We have advanced to the next valid sixteenth note,
+                    # thus we rotate out the last sequence and write it to seq
+                    _, last_seq = seq_buffer[0]
+                    last_seq.append(self.encodingConfig.time_note)
+                    tokens.extend(self.encodingConfig.reorder_current(last_seq))
+                    # Remove the last sequence and add new next sequence
+                    seq_buffer.pop(0)
+                    seq_buffer.append((tick + step, []))
 
             # active has shape (N, 2) with columns [pitch, track]
             active = np.argwhere(pr[tick] != 0)
@@ -258,9 +288,9 @@ class OnTheFlyMidiDataset(Dataset):
                 # -------------------
                 # Handle drum events
                 # -------------------
-                track = EncodingConfig.encoding_order[track]
+                track = self.encodingConfig.encoding_order[track]
                 if track == 'Drums':
-                    if pitch not in EncodingConfig.drum_pitches:
+                    if pitch not in self.encodingConfig.drum_pitches:
                         continue
 
                     # Determine to which sixteenth note this note snaps to (either next or last)
@@ -272,14 +302,14 @@ class OnTheFlyMidiDataset(Dataset):
                         buffer = 1
 
                     # Map pitch
-                    drum_token = EncodingConfig.drum_pitch_to_token[pitch]
+                    drum_token = self.encodingConfig.drum_pitch_to_token[pitch]
 
                     # Add base drum token
                     seq_buffer[buffer][1].append(drum_token)
 
                     # Add timing offset if not 0
                     if offset != 0:
-                        offset_token = EncodingConfig.microtiming_delta_to_token[offset]
+                        offset_token = self.encodingConfig.microtiming_delta_to_token[offset]
                         seq_buffer[buffer][1].append(offset_token)
 
                 # ------------------------
@@ -298,16 +328,16 @@ class OnTheFlyMidiDataset(Dataset):
                         pitch -= 12
 
                     # Offset and clip
-                    pitch -= EncodingConfig.note_offset
+                    pitch -= self.encodingConfig.note_offset
                     if pitch < 0:
                         pitch = 0
-                    if pitch > EncodingConfig.note_size - 1:
-                        pitch = EncodingConfig.note_size - 1
+                    if pitch > self.encodingConfig.note_size - 1:
+                        pitch = self.encodingConfig.note_size - 1
 
                     # Encode token
-                    note = (EncodingConfig.instrument_intervals[track][0] - 1) + pitch
+                    note = (self.encodingConfig.instrument_intervals[track][0] - 1) + pitch
 
-                    if note >= EncodingConfig.vocab_size:
+                    if note >= self.encodingConfig.vocab_size:
                         raise ValueError('Note out of vocabulary.')
 
                     # Write the note to the current sequence of this sixteenth note
@@ -321,14 +351,14 @@ class OnTheFlyMidiDataset(Dataset):
 
         # Write all sequences to seq
         for _, sub_seq in seq_buffer:
-            tokens.extend(EncodingConfig.reorder_current(sub_seq))
+            tokens.extend(self.encodingConfig.reorder_current(sub_seq))
 
-        # Cut the tokens down if we processed too many
+        # Cut the tokens down if we processed too many. Usually its only 3-5 tokens more
         if len(tokens) > self.chunk_size - 1:
             tokens = tokens[:self.chunk_size - 1]
 
         # Append eos token
-        tokens.append(EncodingConfig.end_note)
+        tokens.append(self.encodingConfig.end_note)
 
         tokens = np.array(tokens)
         seq_len = len(tokens)
@@ -337,7 +367,7 @@ class OnTheFlyMidiDataset(Dataset):
             pad_len = self.chunk_size - seq_len
 
             # Create padding
-            padding_arr = np.full((pad_len,), EncodingConfig.padding_token, dtype=np.int64)
+            padding_arr = np.full((pad_len,), self.encodingConfig.padding_token, dtype=np.int64)
 
             # Create the final token sequence
             tokens = np.concatenate([tokens, padding_arr])
