@@ -1,7 +1,7 @@
 import shutil
 
 from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
-from backend.ml_model.dataloader import MidiDataset, MidiRAMDataset, OnTheFlyMidiDataset
+from backend.ml_model.dataloader import OnTheFlyMidiDataset
 import glob
 import json
 import random
@@ -58,7 +58,7 @@ MODEL_CONFIGURATIONS = {
             'patience': 5,
             'accumulation_steps': 1,
             'n_modulations': 11,
-            'num_workers': 8,
+            'num_workers': 4,
             'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
             'compile_model': True,
@@ -78,6 +78,11 @@ MODEL_CONFIGURATIONS = {
             # --- Attention: Using a head_dim of 32 ---
             num_attention_heads=16,  # Derived from hidden_size / 32
             num_key_value_heads=4,  # GQA ratio (16/4)
+
+            # -- Advanced hyperparameters --
+            hidden_act='silu',
+            partial_rotary_factor=1.0,
+            # Percentage of the query and keys which will have rotary embedding.
 
             # --- Standard parameters for a Phi-3 model ---
             max_position_embeddings=2048,
@@ -284,7 +289,7 @@ def train(
     #         col_names=['input_size', 'output_size', 'num_params', 'mult_adds'],
     #         depth=10
     #         )
-    # exit()
+
     # Compile the model to use graph like representation
     if compile_model:
         print('Compiling model...')
@@ -537,7 +542,7 @@ def train(
     return False
 
 
-def training_manager(epochs_per_session=10, progress_file='runs/progress.json'):
+def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
     """
     Manages the training schedule by automatically selecting and training
     the model with the fewest completed epochs.
@@ -674,7 +679,7 @@ if __name__ == '__main__':
 
 
     ### TODO Remove this. Its only for debugging an running many quick runs in succession:
-    shutil.rmtree(r'C:\Users\mbrun\Documents\University_Branche\Project\webserver\backend\ml_model\runs\Phi-3-head-dim-64')
+    # shutil.rmtree(r'C:\Users\mbrun\Documents\University_Branche\Project\webserver\backend\ml_model\runs\Phi-3-head-dim-64')
 
     # --- Execute the appropriate function ---
     if args.training_manager:

@@ -11,8 +11,8 @@ from torch.utils.data import DataLoader
 
 
 def dataset_loading_times():
-    batch_size = 32
-    num_workers_list = [0, 1, 4, 8, 12, 16]
+    batch_size = 16
+    num_workers_list = [0, 1, 2, 4, 8]
     results_filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'plots', 'dataloader_benchmarks')
 
     if not os.path.exists(f'{results_filepath}.pkl'):
@@ -22,7 +22,7 @@ def dataset_loading_times():
             sample_files = glob.glob(os.path.join(dataset_path, 'lpd_5_cleansed/*/*/*/*/*.npz'))
 
             # Create dataset
-            train_dataset = OnTheFlyMidiDataset(sample_files, 11, chunk_size=1024)
+            train_dataset = OnTheFlyMidiDataset(sample_files, EncodingConfig, 11, chunk_size=1024)
 
             # Create dataloader
             train_dataloader = DataLoader(
