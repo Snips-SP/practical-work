@@ -1,5 +1,4 @@
-import shutil
-
+import os
 from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
 from backend.ml_model.dataloader import OnTheFlyMidiDataset
 import glob
@@ -10,64 +9,14 @@ from transformers import get_scheduler, Phi3ForCausalLM, Phi3Config
 import torch
 from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
-from torchinfo import summary
 from tqdm import tqdm
 import argparse
 import math
-import os
 from typing import Tuple
 
 
 MODEL_CONFIGURATIONS = {
-    'Phi-3-head-dim-64': {
-        # --- Config V1: head_dim=64 ---
-        'config': Phi3Config(
-            # --- Core architecture ---
-            hidden_size=512,
-            num_hidden_layers=8,
-            intermediate_size=2048,  # 4x MLP expansion ratio
-
-            # --- Attention: Using a head_dim of 64 ---
-            num_attention_heads=8,  # Derived from hidden_size / 64
-            num_key_value_heads=2,  # GQA with a 4:1 ratio (8/2)
-            # This is the number of key_value heads that should be used to implement Grouped Query Attention.
-            # If num_key_value_heads=num_attention_heads, the model will use Multi Head Attention (MHA),
-            # if num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used.
-
-            # -- Advanced hyperparameters --
-            hidden_act='silu',
-            partial_rotary_factor=1.0,
-            # Percentage of the query and keys which will have rotary embedding.
-
-            # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=2048,
-            vocab_size=EncodingConfig.vocab_size,
-            bos_token_id=EncodingConfig.begin_note,
-            eos_token_id=EncodingConfig.end_note,
-            pad_token_id=EncodingConfig.padding_token,
-            initializer_range=0.02,
-            tie_word_embeddings=False,
-        ),
-
-        'hyperparameters': {
-            'num_epochs': 2,
-            'batch_size': 16,
-            'learning_rate': 5e-4,
-            'lr_scheduler': 'cosine',
-            'num_estimated_epochs': 50, ### TODO: Find right amount of estimated epochs
-            'patience': 5,
-            'accumulation_steps': 1,
-            'n_modulations': 11,
-            'num_workers': 4,
-            'attention_implementation': 'eager',
-            'model_dtype': 'bfloat16',
-            'compile_model': True,
-            'gradient_checkpointing': False,
-            'device': 'xpu',
-            'model_name': 'Phi-3-head-dim-64',
-        },
-    },
-    'Phi-3-head-dim-32': {
+    'Phi-3-head-dim-32-n-mod-0-lr-1e-4-grad-acc-16': {
         # --- Config V2: head_dim=32 ---
         'config': Phi3Config(
             # --- Core architecture ---
@@ -95,22 +44,22 @@ MODEL_CONFIGURATIONS = {
         ),
         'hyperparameters': {
             'num_epochs': 2,
-            'batch_size': 6,
-            'learning_rate': 5e-4,
+            'batch_size': 12,
+            'learning_rate': 1e-4,
             'lr_scheduler': 'cosine',
-            'num_estimated_epochs': 50, ### TODO: Find right amount of estimated epochs
-            'patience': 5,
-            'accumulation_steps': 1,
-            'n_modulations': 11,
+            'num_estimated_epochs': 140,
+            'patience': 4,
+            'accumulation_steps': 16,
+            'n_modulations': 0,
             'num_workers': 8,
             'attention_implementation': 'eager',
             'model_dtype': 'bfloat16',
             'compile_model': True,
             'gradient_checkpointing': False,
             'device': 'xpu',
-            'model_name': 'Phi-3-head-dim-32',
+            'model_name': 'Phi-3-head-dim-32-n-mod-0-lr-1e-4-grad-acc-16',
         },
-    }
+    },
 }
 
 
@@ -161,7 +110,7 @@ def train(
         compile_model: bool = False,
 
         # Other parameters
-        model_name: str = 'Phi-2_Model',
+        model_name: str = 'Phi-3_Model',
         checkpointing_per_epochs: int = 10,
         runs_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
         config=None,
@@ -252,11 +201,11 @@ def train(
         }
 
         # Get fresh optimizers
-        optimizer = AdamW(model.parameters(), **optimizer_kwargs)
+        optimizer = AdamW(model.parameters(),  **optimizer_kwargs)
 
         if lr_scheduler == 'cosine':
             # Keep the kwargs as a variable to save them to checkpoints later
-            num_warmup_steps = 500 // accumulation_steps
+            num_warmup_steps = int(((num_estimated_epochs * len(train_files) // (batch_size * accumulation_steps)) / 100) * 5)
             lr_scheduler_kwargs = {
                 'name': 'cosine',
                 'num_warmup_steps': num_warmup_steps,
@@ -265,6 +214,7 @@ def train(
             lr_scheduler = get_scheduler(optimizer=optimizer, **lr_scheduler_kwargs)
         elif lr_scheduler is not None:
             raise NotImplementedError(f'Learning rate scheduler {lr_scheduler} not implemented.')
+
     else:
         # =================================
         # = Continue from last checkpoint =
@@ -284,21 +234,25 @@ def train(
 
     model.to(device, dtype=model_dtype)
 
-    # summary(model,
-    #         input_data=torch.randint(0, 100, (batch_size, 1024), device=device),
-    #         col_names=['input_size', 'output_size', 'num_params', 'mult_adds'],
-    #         depth=10
-    #         )
-
-    # Compile the model to use graph like representation
-    if compile_model:
-        print('Compiling model...')
-        model = torch.compile(model)
-
+    #summary(model,
+    #        input_data=torch.randint(0, 100, (batch_size, 1024), device=device),
+    #        col_names=['input_size', 'output_size', 'num_params', 'mult_adds'],
+    #        depth=10
+    #        )
+    #exit()
     # Enable gradient checkpointing
     if gradient_checkpointing:
         model.gradient_checkpointing_enable()
         model.config.use_cache = False
+
+    # We need to keep track of the uncompiled model since it holds the uncompiled weights
+    # which we want to store in the checkpoint files
+    if compile_model:
+        # Compile the model to use graph like representation
+        print('Compiling model...')
+        model_to_train = torch.compile(model)
+    else:
+        model_to_train = model
 
     # Create dataloader
     train_dataloader = DataLoader(
@@ -316,65 +270,16 @@ def train(
         pin_memory=True
     )
 
-    # Log every 20 accumulated steps
-    logging_interval = 5
+    # Log every epoch
     writer = SummaryWriter(log_dir=log_dir)
-
-    # ===================
-    # = Debugging model =
-    # ===================
-    if debug:
-        # Dictionary to store the mean absolute value of activations from hooks
-        activation_stats = {}
-
-        def get_activation(name):
-            def hook(model, input, output):
-                activation_stats[name] = output.detach().abs().mean().cpu().item()
-
-            return hook
-
-        # List all layer names
-        # print('\n'.join([f'{name}' for name, object in model.named_modules()]))
-
-        # Register hooks on some key layers
-        for i, layer in enumerate(model.model.layers):
-            # Hook the MLP up-projection
-            # This layer is responsible for up-projecting our input
-            # Since it acts like an amplifier, any instability in the input would
-            # cause huge instability in the network
-            layer.mlp.fc1.register_forward_hook(get_activation(f'layer_{i}/mlp_fc1'))
-
-            # Hook the query projection in self-attention
-            # This layer is the query of the self-attention mechanism, if the value inside
-            # the query vector becomes excessively large, the dot-product attention score could
-            # also explode, leading to unstable softmax outputs.
-            # layer.self_attn.q_proj.register_forward_hook(get_activation(f'layer_{i}/attn_q_proj'))
-
-            # Hook the final output layer
-            # The final linear layer which projects the models output into logits. If we experience
-            # Nans in the logits this layer could be the culprit.
-
-        # model.lm_head.register_forward_hook(get_activation('lm_head'))
-
-        def log_logit_stats(name):
-            def hook(model, input, output):
-                # Log the max and min values of the logits
-                writer.add_scalar(f'Per-Step/Logits/{name}_max', output.detach().max().cpu().item(), global_step)
-                writer.add_scalar(f'Per-Step/Logits/{name}_min', output.detach().min().cpu().item(), global_step)
-
-            return hook
-
-        # Hook the final output layer
-        model.lm_head.register_forward_hook(log_logit_stats('lm_head'))
 
     # ======================
     # = Main training loop =
     # ======================
-    print(f'Starting training for {num_epochs} epochs...')
-    progress_bar = tqdm(initial=0, total=num_epochs * len(train_dataloader), desc='Training Progress')
+    progress_bar = tqdm(initial=0, total=num_epochs * len(train_dataloader), desc=f'Training {model_name} for {num_epochs} epochs.')
     for epoch in range(start_epoch, start_epoch + num_epochs):
         # --- Training Step ---
-        model.train()
+        model_to_train.train()
         total_train_loss = 0.0
         accumulated_loss = 0.0
 
@@ -385,7 +290,7 @@ def train(
 
             # Make a forward pass
             # The model will automatically shift the labels and calculate the loss
-            outputs = model(
+            outputs = model_to_train(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=input_ids
@@ -408,36 +313,8 @@ def train(
             # Update weights only every 'accumulation_steps'
             if (i + 1) % accumulation_steps == 0:
                 # Perform gradient clipping and log model wide gradient norm
-                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
-
-                if debug:
-                    # ===================
-                    # = Debugging Model =
-                    # ===================
-                    # Stop training at the first sings of infinite gradients
-                    flag = False
-
-                    # Log weights and their gradients
-                    for name, param in model.named_parameters():
-                        # Log Weight Distributions (with safety check)
-                        if param.data is not None and torch.isfinite(param.data).all():
-                            writer.add_histogram(f'Per-Step/Weights/{name}', param.data, global_step)
-                        else:
-                            flag = True
-                            print(f'Warning: Skipping weight histogram for {name} due to non-finite values.')
-
-                        # Log Per-Layer Gradient Norms (with safety check)
-                        if param.requires_grad and param.grad is not None:
-                            if torch.isfinite(param.grad).all():
-                                grad_norm = param.grad.data.norm(2)
-                                writer.add_scalar(f'Per-Step/Gradients/{name}_norm', grad_norm.item(), global_step)
-                            else:
-                                flag = True
-                                print(f'Warning: Skipping gradient norm for {name} due to non-finite values.')
-
-                    # Log mean absolute activation captured by hooks (as requested)
-                    for name, value in activation_stats.items():
-                        writer.add_scalar(f'Per-Step/Activations/{name}_mean_abs', value, global_step)
+                total_norm = torch.nn.utils.clip_grad_norm_(model_to_train.parameters(), max_norm=0.5)
+                writer.add_scalar('Per-Step/Gradient norm', total_norm.item(), global_step)
 
                 if total_norm > 1e6: raise Exception('Exploding gradients detected!')
 
@@ -448,9 +325,6 @@ def train(
                 if lr_scheduler is not None:
                     # Update learning rate
                     lr_scheduler.step()
-                    last_lr = lr_scheduler.get_last_lr()[0]
-                else:
-                    last_lr = learning_rate
 
                 # --- Per-Step Logging & Progress Bar ---
                 avg_accumulated_loss = accumulated_loss / accumulation_steps
@@ -459,16 +333,7 @@ def train(
                 global_step += 1
                 progress_bar.update(accumulation_steps)
 
-                if global_step % logging_interval == 0:
-                    writer.add_scalar('Per-Step/Training Loss', avg_accumulated_loss, global_step)
-                    writer.add_scalar('Per-Step/Learning Rate', last_lr, global_step)
-                    writer.add_scalar('Per-Step/Gradient Norm', total_norm, global_step)
-                    progress_bar.set_postfix({'Loss': f'{detached_loss:.4f}', 'LR': f'{last_lr:.6f}'})
-
-                if debug and flag:
-                    raise Exception('Aborting due to non-finite values in gradient.')
-
-        # --- Per-Epoch Training Logging ---
+        # --- Per-Epochs Training Logging ---
         # avg_train_loss is calculated over optimizer steps, not batches anymore
         num_optimizer_steps = len(train_dataloader) // accumulation_steps
         avg_train_loss = total_train_loss / num_optimizer_steps if num_optimizer_steps > 0 else 0
@@ -476,73 +341,81 @@ def train(
         writer.add_scalar('Per-Epoch/Training Loss', avg_train_loss, epoch)
         writer.add_scalar('Per-Epoch/Training Perplexity', math.exp(avg_train_loss), epoch)
 
-        # --- Validation Step ---
-        model.eval()
-        total_val_loss = 0.0
-        with torch.no_grad():
-            for batch in tqdm(valid_dataloader, desc=f'Epoch {epoch} Validation'):
-                input_ids = batch[0].to(device).long()
-                outputs = model(input_ids=input_ids, labels=input_ids)
-                total_val_loss += outputs.loss.detach().cpu().item()
+    # --- Validation Step ---
+    model_to_train.eval()
+    total_val_loss = 0.0
+    with torch.no_grad():
+        for input_ids, attention_mask in tqdm(valid_dataloader, desc=f'Epoch {epoch} Validation'):
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
 
-        # --- Per-Epoch Validation Logging ---
-        avg_val_loss = total_val_loss / len(valid_dataloader)
-        validation_loss_per_epoch.append(avg_val_loss)
+            outputs = model_to_train(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=input_ids
+            )
 
-        writer.add_scalar('Per-Epoch/Validation Loss', avg_val_loss, epoch)
-        writer.add_scalar('Per-Epoch/Validation Perplexity', math.exp(avg_val_loss), epoch)
-        print(f'\nEpoch {epoch}: Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f}')
+            total_val_loss += outputs.loss
 
-        # Check if we should increase patience counter or reset it
-        best_model = False
-        best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
-        if avg_val_loss <= best_val_loss:
-            patience_counter = 0
-            best_model = True
-        else:
-            patience_counter += 1
+    # --- Per-Epoch Validation Logging ---
+    avg_val_loss = (total_val_loss.item() / len(valid_dataloader))
+    validation_loss_per_epoch.append(avg_val_loss)
 
-        # Make a checkpoint every few epochs or when we aboard due to early stopping or if its the last epoch
-        if epoch % checkpointing_per_epochs == 0 or patience_counter >= patience or epoch + 1 >= start_epoch + num_epochs:
-            # --- Checkpointing ---
-            checkpoint_data = {
-                'epoch': epoch,
-                'training_loss_per_epoch': training_loss_per_epoch,
-                'validation_loss_per_epoch': validation_loss_per_epoch,
-                'patience': {
-                    'patience': patience,
-                    'patience_counter': patience_counter
-                },
-                'global_step': global_step,
-                'model_state_dict': model.state_dict(),
-                'config': model.config.to_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'optimizer_kwargs': optimizer_kwargs,
-                'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
-                'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
-            }
-            torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
-            if best_model:
-                # Save as current best model
-                torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
+    writer.add_scalar('Per-Epoch/Validation Loss', avg_val_loss, epoch)
+    writer.add_scalar('Per-Epoch/Validation Perplexity', math.exp(avg_val_loss), epoch)
+    print(f'\nEpoch {epoch}: Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f}')
 
-        # Early stop
-        if patience_counter >= patience:
-            print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
-            writer.close()
-            return True
+    # Check if we should increase patience counter or reset it
+    best_model = False
+    best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
+    if avg_val_loss <= best_val_loss:
+        patience_counter = 0
+        best_model = True
+    else:
+        patience_counter += 1
 
-        if epoch >= num_estimated_epochs:
-            # Stop at estimated epochs
-            writer.close()
-            return True
+    # Make a checkpoint every few epochs or when we aboard due to early stopping or if its the last epoch
+    if epoch % checkpointing_per_epochs == 0 or patience_counter >= patience or epoch + 1 >= start_epoch + num_epochs:
+        # --- Checkpointing ---
+        checkpoint_data = {
+            'epoch': epoch,
+            'training_loss_per_epoch': training_loss_per_epoch,
+            'validation_loss_per_epoch': validation_loss_per_epoch,
+            'patience': {
+                'patience': patience,
+                'patience_counter': patience_counter
+            },
+            'global_step': global_step,
+            'model_dtype': model_dtype,
+            'model_state_dict': model.state_dict(),
+            'config': model.config.to_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'optimizer_kwargs': optimizer_kwargs,
+            'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
+        }
+        torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
+        if best_model:
+            # Save as current best model
+            torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
+
+    # Early stop
+    if patience_counter >= patience:
+        print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
+        writer.close()
+        return True
+
+    if epoch >= num_estimated_epochs:
+        # Stop at estimated epochs
+        writer.close()
+        return True
 
     print('Training completed!')
     writer.close()
     return False
 
 
-def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
+def training_manager(epochs_per_session=10, progress_file='runs\progress.json'):
     """
     Manages the training schedule by automatically selecting and training
     the model with the fewest completed epochs.
@@ -574,7 +447,7 @@ def training_manager(epochs_per_session=1, progress_file='runs/progress.json'):
         # Check if any unfinished models exist and find the one with min progress
         if unfinished_models:
             model_to_train = min(unfinished_models, key=lambda model: unfinished_models[model]['progress'])
-            print(f'Model with least progress to train next: {model_to_train})')
+            print(f'Model with least progress to train next: {model_to_train}')
         else:
             print('All models are done. No models to train.')
             print('')
@@ -618,7 +491,7 @@ if __name__ == '__main__':
     run_params = parser.add_argument_group('Run Management Parameters')
 
     # --- Training Parameters ---
-    train_params.add_argument('--num_epochs', type=int, required=True,
+    train_params.add_argument('--num_epochs', type=int,
                               help='Number of epochs for this training session.')
     train_params.add_argument('--batch_size', type=int, default=4,
                               help='Number of samples per batch.')
@@ -665,7 +538,7 @@ if __name__ == '__main__':
                                help='Disable compile.')
 
     # --- Run Management Parameters ---
-    run_params.add_argument('--model_name', type=str, default='Phi-2_Model',
+    run_params.add_argument('--model_name', type=str, default='Phi-3_Model',
                             help='Base name for the run and logging directory.')
     run_params.add_argument('--runs_path', type=str,
                             default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
@@ -676,10 +549,6 @@ if __name__ == '__main__':
                             help='If specified, ignores other CLI arguments and runs a hardcoded training session.')
 
     args = parser.parse_args()
-
-
-    ### TODO Remove this. Its only for debugging an running many quick runs in succession:
-    # shutil.rmtree(r'C:\Users\mbrun\Documents\University_Branche\Project\webserver\backend\ml_model\runs\Phi-3-head-dim-64')
 
     # --- Execute the appropriate function ---
     if args.training_manager:

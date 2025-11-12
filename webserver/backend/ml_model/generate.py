@@ -1,54 +1,62 @@
 from backend.ml_model.helper import chord2tokens, load_latest_checkpoint, EncodingConfig, get_device
-import numpy as np
-import torch
 import pypianoroll
 from tqdm import trange
 import os
 from collections import deque
+import torch
+import numpy as np
+import time
 
 
-def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=256, temperature=0.7, top_k=0, top_p=0.45):
-    """Generates a sequence of tokens using a sliding window approach.
-
-    This is useful for generating sequences longer than the model's maximum
-    context window. The function generates `step_size` new tokens in each
-    iteration, using the last part of the previously generated sequence as the
-    new context.
-
-    :param model: The pre-trained autoregressive model (e.g., GPT2LMHeadModel).
-    :param list context: A list of initial token IDs to seed the generation.
-    :param int max_tokens: The target number of new tokens to generate.
-    :param int window_size: The context window size of the model.
-    :param int step_size: The number of new tokens to generate in each step.
-    :returns: A NumPy array containing the generated token IDs.
-    :rtype: numpy.ndarray
+def sliding_window_generate(model, context, max_tokens=1024, window_size=1024, step_size=256, temperature=0.7, top_k=0, top_p=0.45, device='cpu'):
     """
-    device = model.device
+    Generates a sequence of tokens using a sliding window approach,
+    optimized for a torch.compiled model by using a fixed input shape.
+    """
+    steady_state_input_len = window_size - step_size
+    target_gen_length = steady_state_input_len + step_size
+
     context_tokens = torch.tensor(context, device=device, dtype=torch.int64).unsqueeze(0)
+
+    # Pad the initial context
+    if context_tokens.shape[1] < steady_state_input_len:
+        pad_len = steady_state_input_len - context_tokens.shape[1]
+        padding = torch.full((1, pad_len), EncodingConfig.padding_token, device=device, dtype=torch.int64)
+        context_tokens = torch.cat([padding, context_tokens], dim=1)
+
+    context_tokens = context_tokens[:, -steady_state_input_len:]
+
     generated_token_chunks = []
     new_tokens_count = 0
 
     with torch.no_grad():
         while new_tokens_count <= max_tokens:
-            # The current context is the last (window_size - step_size) tokens
-            current_context = context_tokens[:, -(window_size - step_size):]
+            # current_context will always have shape [1, steady_state_input_len]
+            current_context = context_tokens[:, -steady_state_input_len:]
 
-            output = model.generate(
+            # Create a mask that ignores padding tokens.
+            attention_mask = (current_context != EncodingConfig.padding_token).long()
+
+            print('Generating new tokens...')
+            start_time = time.time()
+            context_tokens = model.generate(
                 current_context,
-                max_length=current_context.shape[1] + step_size,
+                attention_mask=attention_mask,
+                max_length=target_gen_length,
                 temperature=temperature,
                 top_k=top_k,
                 top_p=top_p,
                 do_sample=True,
-                use_cache=True
+                use_cache=False,
+                pad_token_id=EncodingConfig.padding_token,
             )
+            print('Generation took {:.2f} seconds'.format(time.time() - start_time))
 
             # Grab only the new tokens
-            new_tokens = output[:, current_context.shape[1]:]
+            new_tokens = context_tokens[:, current_context.shape[1]:]
 
             # Append the new tokens to our list and update the full context
-            generated_token_chunks.append(new_tokens)
-            context_tokens = torch.cat([context_tokens, new_tokens], dim=1)
+            generated_token_chunks.append(new_tokens.cpu())
             new_tokens_count += new_tokens.shape[1]
 
     # Concatenate all generated chunks at once
@@ -71,19 +79,19 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
         raise ValueError('The number of chords must be equal to the number of timings')
 
     # Load model from the folder
-    model, _, _, _, _, _, _, _, _, _ = load_latest_checkpoint(model_dir)
+    model = load_latest_checkpoint(model_dir, model_only=True)
     # Move to device
     model.to(device)
     model.eval()
-
-    # Encode chords into tokens
-    chord_tokens_queue = deque([chord2tokens(c) for c in chords])
-    timings_queue = deque(timings)
 
     # Use a fixed-size deque for the context window to prevent unbounded memory growth
     # The size should be based on the model's window size.
     context_window_size = model.config.max_position_embeddings  # e.g., 1024
     context_sequence = deque(maxlen=context_window_size)
+
+    # Encode chords into tokens
+    chord_tokens_queue = deque([chord2tokens(c) for c in chords])
+    timings_queue = deque(timings)
 
     # Create an empty pianoroll array
     total_steps = sum(timings)
@@ -110,13 +118,13 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
     current_tick = 0
     i = 0
     # Decode it again
-    with torch.no_grad(), trange(total_steps) as progress_bar:
+    with trange(total_steps) as progress_bar:
         # Prevent infinite loop
         while i <= 100_000:
             i += 1
             # If the queue is empty, create new tokens
             if not generated_sequence_cache:
-                new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p)
+                new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p, device=device)
                 generated_sequence_cache.extend(new_tokens)
 
             note = generated_sequence_cache.popleft()
@@ -177,7 +185,7 @@ def generate_from_chords(chords: list, timings: list, tempo: int,  model_dir: st
                     # Check if the queue is empty
                     if not generated_sequence_cache:
                         # Extend the queue with newly generated tokens
-                        new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p)
+                        new_tokens = sliding_window_generate(model, list(context_sequence), max_tokens=1024, temperature=temperature, top_k=top_k, top_p=top_p, device=device)
                         generated_sequence_cache.extend(new_tokens)
 
                     microtiming_interval = EncodingConfig.instrument_intervals['Microtimings']

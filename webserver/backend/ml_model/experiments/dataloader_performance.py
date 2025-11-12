@@ -118,4 +118,5 @@ def dataset_loading_times():
 
 
 if __name__ == '__main__':
+    EncodingConfig()
     dataset_loading_times()

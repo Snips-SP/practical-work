@@ -50,9 +50,26 @@ def calculate_statistics_per_file(file_path):
                 # Check each track individually
                 for track_idx, track_type in enumerate(track_types):
                     if track_idx < pr.shape[0]:  # Make sure track exists
-                        # Check if this specific track has a note at this timestep
-                        has_note = np.any(pr[track_idx, timestep, :] > 0)
-                        if has_note and track_type in track_resolution_steps:
+                        # --- Note Onset Logic ---
+
+                        # Get a boolean array of active pitches at the current step
+                        current_notes_on = pr[track_idx, timestep, :] > 0
+
+                        # Get a boolean array of active pitches at the previous step
+                        if timestep == 0:
+                            # At timestep 0, any note is an onset (no previous step)
+                            prev_notes_on = np.zeros_like(current_notes_on, dtype=bool)
+                        else:
+                            prev_notes_on = pr[track_idx, timestep - 1, :] > 0
+
+                        # Find onsets: notes that are ON now but were OFF previously
+                        # (This is a boolean array operation: A and not B)
+                        onsets = current_notes_on & (~prev_notes_on)
+
+                        # Check if *any* pitch had an onset at this timestep
+                        has_onset = np.any(onsets)
+
+                        if has_onset:
                             track_resolution_steps[track_type][step_in_resolution] += 1
 
         return {

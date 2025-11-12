@@ -1,7 +1,7 @@
 import json
 
 import numpy as np
-from transformers import PhiConfig, Phi3ForCausalLM
+from transformers import Phi3Config, Phi3ForCausalLM
 from pydub import AudioSegment
 from pydub.utils import which
 import torch
@@ -55,7 +55,7 @@ class EncodingConfig:
     end_note: int = None
     begin_note: int = None
 
-    # Drum pitches used in your dataset (sorted)
+    # Drum pitches used in the dataset (sorted)
     drum_pitches: List[int] = [27, 28, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50,
                                51, 53, 54, 55, 56, 57, 59, 60, 61, 62, 63, 64, 65, 67, 68, 69, 70, 73, 75,
                                76, 77, 80, 81, 82, 83, 85, 87]
@@ -115,8 +115,7 @@ class EncodingConfig:
         current_token += 1
         cls.end_note = current_token
         current_token += 1
-        cls.padding_token = current_token
-        current_token += 1
+        cls.padding_token = cls.end_note
         cls.instrument_intervals['Special'] = (instrument_base, current_token-1)
 
         # Final vocabulary size and token list
@@ -187,7 +186,7 @@ def mid_to_mp3(mid_file: str, sf2_file: str, output_file: str = 'output.mp3'):
     try:
         # Synthesize MIDI to the temporary WAV file
         subprocess.run(
-            ['fluidsynth', '-qni', sf2_file, mid_file, '-F', tmp_wav_path],
+            ['fluidsynth', '-qni', '-F', tmp_wav_path, sf2_file, mid_file],
             check=True
         )
 
@@ -278,7 +277,7 @@ def chord2tokens(chord: str) -> list:
 
 def load_latest_checkpoint(
         directory: str, name: str = 'checkpoint_epoch_', device: str = 'cpu',
-        optimizer_class=None, learning_rate_scheduler_class=None
+        optimizer_class=None, learning_rate_scheduler_class=None, model_only=False
 ):
     """Load the latest checkpoint from a directory based on epoch number.
 
@@ -344,14 +343,14 @@ def load_latest_checkpoint(
     # = Create and load model =
     # =========================
     try:
-        config = PhiConfig(**checkpoint['config'])
+        config = Phi3Config(**checkpoint['config'])
     except Exception as e:
         raise ValueError(f'Failed to create Phi-2Config from saved config: {e}')
 
     # Create model from config
     try:
         model = Phi3ForCausalLM(config)
-        model.to(device)
+        model.to(device, dtype=checkpoint['model_dtype'])
     except Exception as e:
         raise ValueError(f'Failed to create PhiForCausalLM from config: {e}')
 
@@ -360,6 +359,9 @@ def load_latest_checkpoint(
         model.load_state_dict(checkpoint['model_state_dict'])
     except Exception as e:
         raise ValueError(f'Failed to load model weights: {e}')
+
+    if model_only:
+        return model
 
     # =============================
     # = Create and load optimizer =
@@ -409,9 +411,9 @@ def load_latest_checkpoint(
         with open(os.path.join(directory, 'train_valid_test_split.json'), 'r') as f:
             train_valid_test_split = json.load(f)
 
-        train_files = train_valid_test_split['train_files']
-        valid_files = train_valid_test_split['valid_files']
-        test_files = train_valid_test_split['test_files']
+        train_files = train_valid_test_split['train']
+        valid_files = train_valid_test_split['valid']
+        test_files = train_valid_test_split['test']
     else:
         train_files = None
         valid_files = None
