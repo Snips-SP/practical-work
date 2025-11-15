@@ -9,11 +9,12 @@ class OnTheFlyMidiDataset(Dataset):
     On-the-fly MIDI dataloader
     """
 
-    def __init__(self, datafiles: list, encodingConfig, n_modulations: int = 0, chunk_size: int = 1024):
+    def __init__(self, datafiles: list, encodingConfig, n_modulations: int = 0, chunk_size: int = 1024, warmup_steps: int = 128):
         self.encodingConfig = encodingConfig
         self.filepaths = datafiles
         self._effective_chunk_size = chunk_size - 2
         self.chunk_size = chunk_size
+        self.warmup_steps = warmup_steps
 
         # All possible pitch shifts, excluding 0.
         possible_shifts = list(range(-5, 0)) + list(range(1, 7))
@@ -44,11 +45,14 @@ class OnTheFlyMidiDataset(Dataset):
         # Change ordering to get consistent indexing
         pr = pr[:, :, self.encodingConfig.trc_idx]
 
-        # Init token list with bos token
-        tokens = [self.encodingConfig.begin_note]
+        # Init token list
+        tokens = []
 
         # Chose a random starting tick in the sequence
         tick = random.randint(0, pr.shape[0])
+        if tick == 0:
+            tokens.append(self.encodingConfig.begin_note)
+
         # Snap to the last step
         tick = tick - (tick % step)
 
@@ -142,12 +146,13 @@ class OnTheFlyMidiDataset(Dataset):
         for _, sub_seq in seq_buffer:
             tokens.extend(self.encodingConfig.reorder_current(sub_seq))
 
-        # Cut the tokens down if we processed too many. Usually its only 3-5 tokens more
-        if len(tokens) > self.chunk_size - 1:
-            tokens = tokens[:self.chunk_size - 1]
-
-        # Append eos token
-        tokens.append(self.encodingConfig.end_note)
+        if len(tokens) > self.chunk_size:
+            # We truncate to the exact chunk size.
+            tokens = tokens[:self.chunk_size]
+        else:
+            # Check if we have room for the EOS
+            if len(tokens) < self.chunk_size:
+                tokens.append(self.encodingConfig.end_note)
 
         tokens = np.array(tokens)
         seq_len = len(tokens)
@@ -161,12 +166,12 @@ class OnTheFlyMidiDataset(Dataset):
             # Create the final token sequence
             tokens = np.concatenate([tokens, padding_arr])
 
-            # Create mask: 0 for real tokens, 1 for padding
-            mask = np.concatenate([np.zeros(seq_len, dtype=np.int64), np.ones(pad_len, dtype=np.int64)])
+            # 1 for real tokens, 0 for padding
+            mask = np.concatenate([np.ones(seq_len, dtype=np.int64), np.zeros(pad_len, dtype=np.int64)])
         else:
+            # Otherwise the mask is just full of ones
+            mask = np.ones_like(tokens, dtype=np.int64)
 
-            # Otherwise the mask is just full of zeros
-            mask = np.zeros_like(tokens, dtype=np.int64)
         return tokens, mask
 
 
@@ -176,6 +181,15 @@ class OnTheFlyMidiDataset(Dataset):
         # Get tokens and mask from midi file
         tokens, mask = self.encode_midi(midi_path, aug_value)
 
+        # Create a copy of tokens to serve as the target labels
+        labels = tokens.copy()
+
+        # Anywhere the attention mask is 0, the label should be -100 (ignore)
+        labels[mask == 0] = -100
+
+        # Apply the Warm-up Mask by overwriting the first 64 entries with -100.
+        labels[:self.warmup_steps] = -100
+
         # Convert to torch tensors
-        return torch.from_numpy(tokens).to(torch.long), torch.from_numpy(mask).to(torch.long)
+        return torch.from_numpy(tokens).to(torch.long), torch.from_numpy(mask).to(torch.long), torch.from_numpy(labels).to(torch.long)
 
