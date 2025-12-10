@@ -347,7 +347,7 @@ def decode_to_midi(piece: np.ndarray, total_length: int, tempo: int, output: str
                 trc = EncodingConfig.midi_tracks.index('Drums')
                 midi_value = EncodingConfig.drum_token_to_pitch[note]
 
-                if len(piece) < i+1 and microtiming_interval[0] <= piece[i + 1] <= microtiming_interval[1]:
+                if i + 1 < len(piece) and microtiming_interval[0] <= piece[i + 1] <= microtiming_interval[1]:
                     # It is a microtiming, so we have to adjust the position by the offset
                     i += 1
                     microtiming = piece[i]
