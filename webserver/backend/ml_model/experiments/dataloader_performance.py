@@ -6,7 +6,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 from backend.ml_model.dataloader import OnTheFlyMidiDataset
-from backend.ml_model.helper import EncodingConfig
+from backend.ml_model.encoding import EncodingConfig
 from torch.utils.data import DataLoader
 
 

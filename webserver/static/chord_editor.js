@@ -6,8 +6,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Data for Autocomplete & Validation ---
     const rootNotes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     const chordQualities = [
-        '', 'm', '7', 'm7', 'M7', 'm7-5', 'dim', 'sus4', '7sus4', 'aug',
-        'm6', '7(9)', 'm7(9)', 'add9', '6', 'mM7', '7-5', '7#5'
+        '', 'm',
+        '7', 'm7', 'M7', 'mM7',
+        'sus4', 'add9',
+        'dim', 'aug',
+        '6', 'm6',
+        '7-5', 'm7-5', 'M7-5', '7#5',
+        '9', 'm9', 'M9',
+        '7(9)', 'm7(9)'
     ];
     let activeInput = null;
 

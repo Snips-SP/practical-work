@@ -35,6 +35,21 @@
             <input type="text" id="song-name-input" placeholder="Enter a name..." class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
         </div>
 
+        <div class="w-full max-w-md mb-4 grid grid-cols-2 gap-4">
+            <div>
+                <label for="drum-category-select" class="text-sm text-slate-400 mb-2 block">Drum Style</label>
+                <select id="drum-category-select" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-sm text-white">
+                    <option value="" disabled selected>Loading...</option>
+                </select>
+            </div>
+            <div>
+                <label for="drum-pattern-select" class="text-sm text-slate-400 mb-2 block">Pattern</label>
+                <select id="drum-pattern-select" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-sm text-white disabled:opacity-50" disabled>
+                    <option value="" disabled selected>Select Style First</option>
+                </select>
+            </div>
+        </div>
+
         <div class="w-full mb-6">
             <label class="text-sm text-slate-400 mb-2 block">Chord Progression</label>
             <div class="flex items-center justify-center gap-2">
@@ -54,7 +69,7 @@
             <div id="advanced-options" class="hidden grid grid-cols-3 gap-4 bg-slate-800/50 p-4 rounded-lg">
                 <div>
                     <label for="temperature-input" class="block text-xs text-slate-400">Temperature</label>
-                    <input type="text" id="temperature-input" value="1.0" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
+                    <input type="text" id="temperature-input" value="0.2" class="w-full bg-slate-700 border border-slate-600 rounded p-2 text-center text-sm">
                 </div>
                 <div>
                     <label for="top-k-input" class="block text-xs text-slate-400">Top K</label>

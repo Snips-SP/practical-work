@@ -3,7 +3,7 @@ import os
 import pickle
 import numpy as np
 import pypianoroll
-from backend.ml_model.helper import EncodingConfig
+from backend.ml_model.encoding import EncodingConfig
 from backend.ml_model.dataloader import OnTheFlyMidiDataset
 
 from typing import Dict, List

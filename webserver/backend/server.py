@@ -1,4 +1,4 @@
-from backend.ml_model.generate import generate_from_chords
+from backend.ml_model.generate import generate_backing_track
 from backend.ml_model.helper import mid_to_mp3
 from flask import Flask, render_template, jsonify, request
 import os.path
@@ -7,7 +7,7 @@ import re
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 app.secret_key = 'secret_keyyyy'
-
+DRUM_SEEDS_DIR = os.path.join('backend', 'ml_model', 'seeds', 'drums')
 
 def sanitize_filename(name):
     # Replace spaces with underscores
@@ -21,6 +21,31 @@ def sanitize_filename(name):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/get-drum-seeds', methods=['GET'])
+def get_drum_seeds():
+    if not os.path.exists(DRUM_SEEDS_DIR):
+        return jsonify({'categories': {}})
+
+    seeds_data = {}
+
+    # Loop through all folders (Categories)
+    for category in os.listdir(DRUM_SEEDS_DIR):
+        category_path = os.path.join(DRUM_SEEDS_DIR, category)
+
+        if os.path.isdir(category_path):
+            files = []
+            # Loop through files in that folder (Items)
+            for f in os.listdir(category_path):
+                if f.endswith('.mid') or f.endswith('.midi'):
+                    files.append(f)
+
+            # Only add category if it has files
+            if files:
+                seeds_data[category] = files
+
+    return jsonify({'categories': seeds_data})
 
 
 @app.route('/play-song', methods=['GET'])
@@ -133,6 +158,18 @@ def generate_music():
     except ValueError:
         return jsonify({'error': 'Invalid top_p value'}), 400
 
+    drum_category = request.json.get('drum_category')
+    drum_pattern = request.json.get('drum_pattern')
+
+    if not drum_category or not drum_pattern:
+        return jsonify({'error': 'Drum style and pattern must be selected'}), 400
+
+    # Construct the path securely
+    drum_seed_path = os.path.join(DRUM_SEEDS_DIR, drum_category, drum_pattern)
+
+    if not os.path.exists(drum_seed_path):
+        return jsonify({'error': 'Selected drum seed file not found on server'}), 404
+
     # Get right folder for user
     music_dir = os.path.join('static', 'music')
     os.makedirs(music_dir, exist_ok=True)
@@ -152,11 +189,12 @@ def generate_music():
 
     # Generate midi file
     try:
-        generate_from_chords(
+        generate_backing_track(
             chords=chords,
             timings=timings,
             tempo=bpm,
             model_dir=model_path,
+            drum_seed_midi_file=drum_seed_path,
             output=tmp_mid_file,
             temperature=temperature,
             top_k=top_k,
@@ -181,8 +219,7 @@ def generate_music():
         }, f)
 
     # Remove the temporary midi file (we only need to keep the mp3 file)
-    # We are keeping them for now for analysis
-    # os.remove(tmp_mid_file)
+    os.remove(tmp_mid_file)
 
     return jsonify({'song': {
         'name': name,

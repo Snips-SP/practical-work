@@ -1,6 +1,6 @@
 import pypianoroll
 import numpy as np
-from backend.ml_model.helper import EncodingConfig
+from backend.ml_model.encoding import EncodingConfig
 
 def calculate_statistics_per_file(file_path):
     """Process a single file and return its statistics per track"""

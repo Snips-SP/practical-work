@@ -1,5 +1,9 @@
 transformers
-pydub
-tensorboard
-flask
 pypianoroll
+pydub
+matplotlib
+flask
+tensorboard
+music21
+pretty_midi
+datasets

@@ -32,6 +32,68 @@ document.addEventListener('DOMContentLoaded', function () {
     let allModels = [];
     audioPlayer.loop = true;
 
+    // Global variable to store the fetched data
+    let drumData = {};
+
+    fetchDrumSeeds();
+    // Attach event listener to Category change
+    document.getElementById('drum-category-select').addEventListener('change', handleCategoryChange);
+
+
+    async function fetchDrumSeeds() {
+        try {
+            const response = await fetch('/get-drum-seeds');
+            const data = await response.json();
+            drumData = data.categories; // Expecting { "Jazz": ["file1.mid", "file2.mid"], ... }
+
+            populateCategoryDropdown();
+        } catch (error) {
+            console.error('Error fetching drum seeds:', error);
+        }
+    }
+
+    function populateCategoryDropdown() {
+        const categorySelect = document.getElementById('drum-category-select');
+        categorySelect.innerHTML = '<option value="" disabled selected>Select Style</option>';
+
+        // Get keys (folder names) and sort them
+        const categories = Object.keys(drumData).sort();
+
+        categories.forEach(category => {
+            const option = document.createElement('option');
+            option.value = category;
+            option.textContent = category;
+            categorySelect.appendChild(option);
+        });
+    }
+
+    function handleCategoryChange(event) {
+        const selectedCategory = event.target.value;
+        const patternSelect = document.getElementById('drum-pattern-select');
+
+        // Reset pattern dropdown
+        patternSelect.innerHTML = '<option value="" disabled selected>Select Pattern</option>';
+        patternSelect.disabled = false;
+
+        // Get files for this category
+        const files = drumData[selectedCategory];
+
+        if (files && files.length > 0) {
+            files.sort().forEach(file => {
+                const option = document.createElement('option');
+                option.value = file;
+                // Clean up display name (remove .mid extension)
+                option.textContent = file.replace('.mid', '').replace('.midi', '');
+                patternSelect.appendChild(option);
+            });
+
+            // Auto-select the first pattern for better UX
+            patternSelect.selectedIndex = 1;
+        } else {
+            patternSelect.innerHTML = '<option disabled>No patterns found</option>';
+        }
+    }
+
     // --- Player Controls & UI ---
     playButton.addEventListener('click', function () {
         if (audioPlayer.paused) {
@@ -204,6 +266,16 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
+        // Get the new dropdown values
+        const drumCategory = document.getElementById('drum-category-select').value;
+        const drumPattern = document.getElementById('drum-pattern-select').value;
+
+        // Basic Validation
+        if (!drumCategory || !drumPattern) {
+            alert("Please select a Drum Style and Pattern.");
+            return;
+        }
+
         // Collect all other parameters
         const generationData = {
             song_name: songNameInput.value.trim(), // Add song name
@@ -214,6 +286,8 @@ document.addEventListener('DOMContentLoaded', function () {
             temperature: temperatureInput.value,
             top_k: topKInput.value,
             top_p: topPInput.value,
+            drum_category: drumCategory,
+            drum_pattern: drumPattern,
         };
 
         // Show spinner and send request

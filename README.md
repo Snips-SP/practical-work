@@ -1,94 +1,122 @@
-# GPT2 Music Generator
+# Phi3-mini Music Generator
 
-A web-based application that generates music using a custom-trained GPT-2 model. Users can input chords in a specified format, and the model outputs MIDI and MP3 files based on the input.
+A web-based application that generates music using a custom-trained **Phi3-mini** model. Users can interact with the model via a web interface to generate MIDI and MP3 files, utilizing genre-specific drum seeds to enhance the output.
 
----
+-----
+
 ## Installation & Setup
 
-### 1. Create Conda Environment
+### 1\. Create Conda Environment
 
 ```bash
 conda create --name MusicGeneration python=3.10.16 -y
 conda activate MusicGeneration
 ```
 
-### 2. Install Dependencies
+### 2\. Install System Dependencies
 
-**Important:** To install PyTorch with GPU/XPU support, run:
+You must install FFmpeg for audio processing.
 
+```bash
+conda install -c conda-forge ffmpeg -y
+```
 
-**For CUDA 11.8:**
+### 3\. Install PyTorch (XPU/GPU Support)
+
+**For Intel Arc (XPU) Support:**
+
+```bash
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu
+```
+
+> **Note:** To use XPU compilation, please follow the instructions here:
+> [PyTorch Inductor on Windows](https://docs.pytorch.org/tutorials/unstable/inductor_windows.html)
+
+**For CUDA 11.8 (Nvidia):**
 
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-**For Intel Arc:**
+### 4\. Install Python Libraries
+
+Install the required Python packages:
 
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/test/xpu
+pip install transformers pypianoroll pydub matplotlib flask tensorboard music21 pretty_midi datasets
 ```
 
-**For the rest of the libraries:**
+### 5\. Install Fluidsynth
 
-```bash
-pip install -r requirements.txt
-conda install -c conda-forge ffmpeg -y
-```
+Fluidsynth is required to render MIDI files into audio.
 
-### 3. Install Fluidsynth
+  - **Windows** (via Chocolatey):
 
-- **Windows** (via Chocolatey):
+<!-- end list -->
 
 ```bash
 choco install fluidsynth -y
 ```
 
-- **Linux**:
+  - **Linux** (Debian/Ubuntu):
+
+<!-- end list -->
 
 ```bash
 sudo apt install fluidsynth
 ```
 
----
+-----
 
-## Training the GPT-2 Model
+## Configuration
 
-### 1. Download Dataset
+### Drum Seeds Directory
+
+The application uses drum loops to enhance generation. You must configure the path to your drum seeds in `server.py`.
+
+The directory should contain folders named after genres (e.g., `rock`, `jazz`), with drum loop files inside them.
+
+**In `server.py`:**
+
+```python
+DRUM_SEEDS_DIR = os.path.join('backend', 'ml_model', 'seeds', 'drums')
+```
+
+Ensure your directory structure matches this path or update the variable to point to your custom location.
+
+-----
+
+## Training the Model
+
+### 1\. Download Dataset
 
 Download the **cleansed version** of the Lakh Pianoroll Dataset from:
 
-🔗 https://hermandong.com/lakh-pianoroll-dataset/dataset
+🔗 [https://hermandong.com/lakh-pianoroll-dataset/dataset](https://hermandong.com/lakh-pianoroll-dataset/dataset)
 
-Place the extracted dataset in the same directory as `encode.py`.
+Place the extracted dataset in the `lpd_5` directory in the same folder as `encode.py`.
 
-### 2. Encode Dataset
-
-```bash
-python -m backend.ml_model.encode --help
-```
-
-With this module the `ldp_5_dataset/` directory containing the `.npz` files for training can be generated.
-
-### 3. Start Training
+### 2\. Start Training
 
 ```bash
 python -m backend.ml_model.train --help
 ```
 
-With the train module new versions from the GPT2 model can be trained with varying hyperparameters.
+Use the train module to train new versions of the Phi3-mini model with varying hyperparameters.
+
 #### Training Details
 
-- Model architecture can be changed in the `NetworkConfig` class in `train.py`.
+  - Model architecture can be configured in the `NetworkConfig` class in `train.py`.
 
-### 4. Training progress
+### 3\. Training Progress
 
-View the training progress either live or analyze it afterward using tensorboard on the runs directory.
+View training progress live or analyze it afterward using TensorBoard:
+
 ```bash
 tensorboard --logdir runs
 ```
 
----
+-----
 
 ## Running the Webserver
 
@@ -98,66 +126,14 @@ Run the following command to start the server:
 python run.py
 ```
 
-This launches a local web interface where users can:
+This launches a local web interface where users can generate music using the selected model from the run folder and listen to generated outputs in MP3.
 
-- Input chord progressions
-- Generate music using the selected GPT-2 model from the run folder
-- Listen to generated outputs in MP3
+### Note on SoundFonts
 
-### Note
+The `SoundFont.sf2` file (e.g., `FluidR3_GM_GS.sf2`) must be located in the `backend/` folder.
+[Download SoundFont](https://musical-artifacts.com/artifacts/738)
 
-- The `SoundFont.sf2` soundfont file (e.g., `FluidR3_GM_GS.sf2`) must be in the `backend/` folder. (https://musical-artifacts.com/artifacts/738)
-
----
-
-## Chord Input Format
-
-Input chords in the following format:
-
-```
-CHORD:DURATION|CHORD:DURATION|...
-```
-
-- **CHORD**: Any chord (major, minor, extended, etc.) with any root note.
-- **DURATION**: Length of the chord in sixtheenth notes.
-
-### Example
-
-```
-C:4|Cm:2|C7:2|Cdim:4
-```
-
-### Supported Chords
-
-Example for root note `C` (all other root notes like `D`, `E`, `F#`, etc. are also valid):
-
-```
-C
-Cm
-C7
-Cm7
-CM7
-Cm7-5
-Cdim
-Csus4
-C7sus4
-Caug
-Cm6
-C7(9)
-Cm7(9)
-Cadd9
-C6
-CmM7
-C7-5
-```
-
----
-
-## Session Storage
-
-Each user session creates a unique folder where all generated audio is stored temporarily.
-
----
+-----
 
 ## Project Structure
 
@@ -165,35 +141,36 @@ Each user session creates a unique folder where all generated audio is stored te
 webserver/
 ├── backend/
 │   ├── ml_model/
-│   │   ├── ldp_5_dataset/        # Encoded dataset
+│   │   ├── experiments/          # Experimental code for the model, dataset, encoding analysis and debugging
 │   │   ├── lpd_5/                # Raw dataset containing lpd_5_cleansed folder
-│   │   ├── runs/                 # Saves model weights per epoch per run (including tensorboard logs)
-│   │   ├── __init__.py
+│   │   ├── runs/                 # Saves model weights per epoch per run (logs included)
+│   │   ├── seeds/                
+│   │   │   └── drums/            # GENRE FOLDERS GO HERE (Rock, Jazz, etc.)
 │   │   ├── dataloader.py
-│   │   ├── encode.py             # Encode raw dataset
+│   │   ├── encoding.py           
 │   │   ├── experiments.py
 │   │   ├── generate.py
 │   │   ├── helper.py
 │   │   └── train.py              # Train your own model
 │   ├── SoundFont.sf2             # SoundFont file for rendering MIDI to audio
-│   └── server.py                 # Web server backend
+│   └── server.py                 # Web server backend (Edit DRUM_SEEDS_DIR here)
 │
 ├── static/
-│   ├── music/
-│   │   └── ec841223-8294-4dea-aca1-f1bf43f1fcc0a/   # User session folder
+│   ├── music/                    # Generated output folder
+│   ├── chord_editor.js
 │   ├── scripts.js
-│   ├── style.css
 │   └── visualizer.js
 │
 ├── templates/
-│   └── run.py                    # Starts the webserver
-│
+├── run.py                        # Starts the webserver
 └── README.md
 ```
----
+
+-----
 
 ## License
 
 This project is for academic use. Please credit appropriately if reused.
 
----
+-----
+

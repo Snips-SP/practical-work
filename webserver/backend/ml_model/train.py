@@ -1,13 +1,12 @@
 import os
-import shutil
-
-from backend.ml_model.helper import get_device, load_latest_checkpoint, EncodingConfig
+from backend.ml_model.encoding import EncodingConfig
+from backend.ml_model.helper import get_device, load_latest_checkpoint
 from backend.ml_model.dataloader import OnTheFlyMidiDataset
 import glob
 import json
 import random
 from torch.utils.data import DataLoader
-from transformers import get_scheduler, Phi3ForCausalLM, Phi3Config, GPT2Config, GPT2LMHeadModel
+from transformers import get_scheduler, Phi3ForCausalLM, Phi3Config
 import torch
 from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
@@ -15,106 +14,158 @@ from tqdm import tqdm
 import argparse
 import math
 from typing import Tuple
+import torchinfo
 
+
+
+config1 = {
+    # --- ~85M params ---
+    'config': Phi3Config(
+        # --- Core architecture ---
+        hidden_size=768,
+        num_hidden_layers=12,
+        intermediate_size=3072,  # 4x MLP expansion ratio
+
+        # --- Attention: Using a head_dim of 64 ---
+        num_attention_heads=12,  # Derived from hidden_size / 64
+        num_key_value_heads=4,  # GQA ratio (16/4)
+
+        # -- Advanced hyperparameters --
+        hidden_act='silu',
+        partial_rotary_factor=1.0,
+        # Percentage of the query and keys which will have rotary embedding.
+
+        # --- Standard parameters for a Phi-3 model ---
+        max_position_embeddings=2048,
+        vocab_size=EncodingConfig.vocab_size,
+        bos_token_id=EncodingConfig.begin_note,
+        eos_token_id=EncodingConfig.end_note,
+        pad_token_id=EncodingConfig.padding_token,
+        initializer_range=0.02,
+        tie_word_embeddings=False,
+    ),
+    'hyperparameters': {
+        'num_epochs': 2,
+        'batch_size': 12,
+        'learning_rate': 3e-4,
+        'lr_scheduler': 'cosine',
+        'num_estimated_epochs': 120,
+        'patience': 5, # Patience per evaluation
+        'accumulation_steps': 16,
+        'n_modulations': 0,
+        'chunk_size': 2048,
+        'num_workers': 8,
+        'attention_implementation': 'eager',
+        'model_dtype': 'bfloat16',
+        'compile_model': True,
+        'gradient_checkpointing': False,
+        'device': 'xpu',
+        'model_name': 'Phi-3-v2-head-dim-64-n-mod-0-lr-3e-4-grad-acc-16',
+    },
+}
+config2 = {
+    # --- Config ~33M params ---
+    'config': Phi3Config(
+        # --- Core architecture ---
+        hidden_size=512,
+        num_hidden_layers=8,
+        intermediate_size=2048,  # 4x MLP expansion ratio
+
+        # --- Attention: Using a head_dim of 64 ---
+        num_attention_heads=8,  # Derived from hidden_size / 64
+        num_key_value_heads=8,  # GQA ratio (16/8)
+
+        # -- Advanced hyperparameters --
+        hidden_act='silu',
+        partial_rotary_factor=1.0,
+        # Percentage of the query and keys which will have rotary embedding.
+        rope_scaling=None,
+
+        # --- Standard parameters for a Phi-3 model ---
+        max_position_embeddings=2048,
+        original_max_position_embeddings=2048,
+        vocab_size=EncodingConfig.vocab_size,
+        bos_token_id=EncodingConfig.begin_note,
+        eos_token_id=EncodingConfig.end_note,
+        pad_token_id=EncodingConfig.padding_token,
+        initializer_range=0.02,
+        tie_word_embeddings=True,
+    ),
+
+    'hyperparameters': {
+        'batch_size': 8,
+        'accumulation_steps': 8, # i.e. effective batch size of 64
+        'learning_rate': 1e-3,
+        'lr_scheduler': 'cosine',
+        'num_estimated_epochs': 100,
+        'patience': 10,
+
+        'n_modulations': 11,
+        'chunk_size': 2048,
+        'num_workers': 4,
+        'warmup_steps': 128, # About 1 bar
+
+        'attention_implementation': 'eager',
+        'model_dtype': 'bfloat16',
+        'compile_model': True,
+        'device': 'xpu',
+        'model_name': 'Phi-3-33M-head-dim-64-GQA-ratio-1-ebs-64-lr-1e-3-epochs-100',
+    },
+}
+config3 = {
+    # --- Config ~31M params ---
+    'config': Phi3Config(
+        # --- Core architecture ---
+        hidden_size=512,
+        num_hidden_layers=8,
+        intermediate_size=2048,  # 4x MLP expansion ratio
+
+        # --- Attention: Using a head_dim of 32 ---
+        num_attention_heads=16,  # Derived from hidden_size / 32
+        num_key_value_heads=8,  # GQA ratio (16/8)
+
+        # -- Advanced hyperparameters --
+        hidden_act='silu',
+        partial_rotary_factor=1.0,
+        # Percentage of the query and keys which will have rotary embedding.
+        rope_scaling=None,
+
+        # --- Standard parameters for a Phi-3 model ---
+        max_position_embeddings=2048,
+        original_max_position_embeddings=2048,
+        vocab_size=EncodingConfig.vocab_size,
+        bos_token_id=EncodingConfig.begin_note,
+        eos_token_id=EncodingConfig.end_note,
+        pad_token_id=EncodingConfig.padding_token,
+        initializer_range=0.02,
+        tie_word_embeddings=True,
+    ),
+
+    'hyperparameters': {
+        'batch_size': 4,
+        'accumulation_steps': 16, # i.e. effective batch size of 64
+        'learning_rate': 1e-3,
+        'lr_scheduler': 'cosine',
+        'num_estimated_epochs': 100,
+        'patience': 10,
+
+        'n_modulations': 11,
+        'chunk_size': 2048,
+        'num_workers': 4,
+        'warmup_steps': 128,
+
+        'attention_implementation': 'eager',
+        'model_dtype': 'bfloat16',
+        'compile_model': True,
+        'device': 'xpu',
+        'model_name': 'Phi-3-33M-head-dim-32-GQA-ratio-16-8-ebs-64-lr-1e-3-epochs-100',
+    },
+}
 
 MODEL_CONFIGURATIONS = {
-    #'Phi-3-v2-head-dim-64-n-mod-0-lr-3e-4-grad-acc-16': {
-    #    # ~85M params
-    #    # --- Config V2: head_dim=64 ---
-    #    'config': Phi3Config(
-    #        # --- Core architecture ---
-    #        hidden_size=768,
-    #        num_hidden_layers=12,
-    #        intermediate_size=3072,  # 4x MLP expansion ratio
-#
-    #        # --- Attention: Using a head_dim of 64 ---
-    #        num_attention_heads=12,  # Derived from hidden_size / 64
-    #        num_key_value_heads=4,  # GQA ratio (16/4)
-#
-    #        # -- Advanced hyperparameters --
-    #        hidden_act='silu',
-    #        partial_rotary_factor=1.0,
-    #        # Percentage of the query and keys which will have rotary embedding.
-#
-    #        # --- Standard parameters for a Phi-3 model ---
-    #        max_position_embeddings=2048,
-    #        vocab_size=EncodingConfig.vocab_size,
-    #        bos_token_id=EncodingConfig.begin_note,
-    #        eos_token_id=EncodingConfig.end_note,
-    #        pad_token_id=EncodingConfig.padding_token,
-    #        initializer_range=0.02,
-    #        tie_word_embeddings=False,
-    #    ),
-    #    'hyperparameters': {
-    #        'num_epochs': 2,
-    #        'batch_size': 12,
-    #        'learning_rate': 3e-4,
-    #        'lr_scheduler': 'cosine',
-    #        'num_estimated_epochs': 120,
-    #        'patience': 5, # Patience per evaluation
-    #        'accumulation_steps': 16,
-    #        'n_modulations': 0,
-    #        'chunk_size': 2048,
-    #        'num_workers': 8,
-    #        'attention_implementation': 'eager',
-    #        'model_dtype': 'bfloat16',
-    #        'compile_model': True,
-    #        'gradient_checkpointing': False,
-    #        'device': 'xpu',
-    #        'model_name': 'Phi-3-v2-head-dim-64-n-mod-0-lr-3e-4-grad-acc-16',
-    #    },
-    #},
-    'debugging': {
-        # --- Config V2: head_dim=64 ---
-
-        # ~33M params
-        'config': Phi3Config(
-            # --- Core architecture ---
-            hidden_size=512,
-            num_hidden_layers=8,
-            intermediate_size=2048,  # 4x MLP expansion ratio
-
-            # --- Attention: Using a head_dim of 64 ---
-            num_attention_heads=8,  # Derived from hidden_size / 64
-            num_key_value_heads=8,  # GQA ratio (16/4)
-
-            # -- Advanced hyperparameters --
-            hidden_act='silu',
-            partial_rotary_factor=1.0,
-            # Percentage of the query and keys which will have rotary embedding.
-            rope_scaling=None,
-
-            # --- Standard parameters for a Phi-3 model ---
-            max_position_embeddings=2048,
-            original_max_position_embeddings=2048,
-            vocab_size=EncodingConfig.vocab_size,
-            bos_token_id=EncodingConfig.begin_note,
-            eos_token_id=EncodingConfig.end_note,
-            pad_token_id=EncodingConfig.padding_token,
-            initializer_range=0.02,
-            tie_word_embeddings=True,
-        ),
-
-        'hyperparameters': {
-            'batch_size': 8,
-            'accumulation_steps': 8, # i.e. effective batch size of 64
-            'learning_rate': 5e-3,
-            'lr_scheduler': 'cosine',
-            'num_estimated_epochs': 1,
-            'patience': 5,
-
-            'n_modulations': 0,
-            'chunk_size': 2048,
-            'num_workers': 4,
-            'warmup_steps': 128, # About 1 bar
-
-            'attention_implementation': 'eager',
-            'model_dtype': 'bfloat16',
-            'compile_model': True,
-            'device': 'xpu',
-            'model_name': 'debugging',
-        },
-    },
+    #config1['hyperparameters']['model_name']: config1,
+    config2['hyperparameters']['model_name']: config2,
+    config3['hyperparameters']['model_name']: config3,
 }
 
 
@@ -228,8 +279,8 @@ def train(
                 'test': test_files
             }, f, indent=4)
 
-        train_dataset = OnTheFlyMidiDataset(train_files, encodingConfig=EncodingConfig, n_modulations=n_modulations, chunk_size=chunk_size, warmup_steps=warmup_steps)
-        valid_dataset = OnTheFlyMidiDataset(valid_files, encodingConfig=EncodingConfig, n_modulations=0, chunk_size=chunk_size, warmup_steps=warmup_steps)
+        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations=n_modulations, chunk_size=chunk_size, warmup_steps=warmup_steps)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, n_modulations=0, chunk_size=chunk_size, warmup_steps=warmup_steps)
 
         print('Training from scratch.\n')
         if config is None:
@@ -290,11 +341,18 @@ def train(
         patience = patience_dict['patience']
         patience_counter = patience_dict['patience_counter']
         # Create datasets from saved train valid test split
-        train_dataset = OnTheFlyMidiDataset(train_files, encodingConfig=EncodingConfig, n_modulations=n_modulations, chunk_size=chunk_size, warmup_steps=warmup_steps)
-        valid_dataset = OnTheFlyMidiDataset(valid_files, encodingConfig=EncodingConfig, n_modulations=0, chunk_size=chunk_size, warmup_steps=warmup_steps)
+        train_dataset = OnTheFlyMidiDataset(train_files, n_modulations=n_modulations, chunk_size=chunk_size, warmup_steps=warmup_steps)
+        valid_dataset = OnTheFlyMidiDataset(valid_files, n_modulations=0, chunk_size=chunk_size, warmup_steps=warmup_steps)
         print(f'Continuing training from epoch {start_epoch}.\n')
 
     model.to(device, dtype=model_dtype)
+
+    torchinfo.summary(model,
+        input_data=torch.randint(0, 100, (batch_size, chunk_size), device=device),
+        col_names=['input_size', 'output_size', 'num_params', 'mult_adds'],
+        depth=2
+    )
+    print('')
 
     # We need to keep track of the uncompiled model since it holds the uncompiled weights
     # which we want to store in the checkpoint files
@@ -390,78 +448,78 @@ def train(
         writer.add_scalar('Per-Epoch/Training_loss', avg_train_loss, epoch)
         writer.add_scalar('Per-Epoch/Training_perplexity', math.exp(avg_train_loss), epoch)
 
-    # --- Validation Step ---
-    model_to_train.eval()
-    total_val_loss = 0.0
-    with torch.no_grad():
-        for input_ids, attention_mask, labels in tqdm(valid_dataloader, desc=f'Epoch {epoch} Validation'):
-            outputs = model_to_train(
-               input_ids=input_ids.to(device),
-               attention_mask=attention_mask.to(device),
-               labels=labels.to(device)
-            )
+        # --- Validation Step ---
+        model_to_train.eval()
+        total_val_loss = 0.0
+        with torch.no_grad():
+            for input_ids, attention_mask, labels in tqdm(valid_dataloader, desc=f'Epoch {epoch} Validation'):
+                outputs = model_to_train(
+                   input_ids=input_ids.to(device),
+                   attention_mask=attention_mask.to(device),
+                   labels=labels.to(device)
+                )
 
-            total_val_loss += outputs.loss
+                total_val_loss += outputs.loss
 
-    # --- Per-Epoch Validation Logging ---
-    avg_val_loss = (total_val_loss.item() / len(valid_dataloader))
-    validation_loss_per_epoch.append(avg_val_loss)
+            # --- Per-Epoch Validation Logging ---
+            avg_val_loss = (total_val_loss.item() / len(valid_dataloader))
+            validation_loss_per_epoch.append(avg_val_loss)
 
-    writer.add_scalar('Per-Epoch/Validation_loss', avg_val_loss, epoch)
-    writer.add_scalar('Per-Epoch/Validation_perplexity', math.exp(avg_val_loss), epoch)
-    print(f'\nEpoch {epoch}: Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f}')
+            writer.add_scalar('Per-Epoch/Validation_loss', avg_val_loss, epoch)
+            writer.add_scalar('Per-Epoch/Validation_perplexity', math.exp(avg_val_loss), epoch)
+            print(f'\nEpoch {epoch}: Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f}')
 
-    # Check if we should increase patience counter or reset it
-    best_model = False
-    best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
-    if avg_val_loss <= best_val_loss:
-        patience_counter = 0
-        best_model = True
-    else:
-        patience_counter += 1
+            # Check if we should increase patience counter or reset it
+            best_model = False
+            best_val_loss = min(validation_loss_per_epoch) if validation_loss_per_epoch else float('inf')
+            if avg_val_loss <= best_val_loss:
+                patience_counter = 0
+                best_model = True
+            else:
+                patience_counter += 1
 
-    # Make a checkpoint every few epochs or when we aboard due to early stopping or if its the last epoch
-    if epoch % checkpointing_per_epochs == 0 or patience_counter >= patience or epoch + 1 >= start_epoch + num_epochs:
-        # --- Checkpointing ---
-        checkpoint_data = {
-            'epoch': epoch,
-            'training_loss_per_epoch': training_loss_per_epoch,
-            'validation_loss_per_epoch': validation_loss_per_epoch,
-            'patience': {
-                'patience': patience,
-                'patience_counter': patience_counter
-            },
-            'global_step': global_step,
-            'model_dtype': model_dtype,
-            'model_state_dict': model.state_dict(),
-            'config': model.config.to_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'optimizer_kwargs': optimizer_kwargs,
-            'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
-            'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
-        }
-        torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
-        if best_model:
-            # Save as current best model
-            torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
+            # Make a checkpoint every few epochs or when we aboard due to early stopping or if its the last epoch
+            if epoch % checkpointing_per_epochs == 0 or patience_counter >= patience or epoch + 1 >= start_epoch + num_epochs:
+                # --- Checkpointing ---
+                checkpoint_data = {
+                    'epoch': epoch,
+                    'training_loss_per_epoch': training_loss_per_epoch,
+                    'validation_loss_per_epoch': validation_loss_per_epoch,
+                    'patience': {
+                        'patience': patience,
+                        'patience_counter': patience_counter
+                    },
+                    'global_step': global_step,
+                    'model_dtype': model_dtype,
+                    'model_state_dict': model.state_dict(),
+                    'config': model.config.to_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'optimizer_kwargs': optimizer_kwargs,
+                    'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
+                    'lr_scheduler_kwargs': lr_scheduler_kwargs if lr_scheduler is not None else None,
+                }
+                torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_epoch_{epoch}.ph'))
+                if best_model:
+                    # Save as current best model
+                    torch.save(checkpoint_data, os.path.join(log_dir, f'checkpoint_best.ph'))
 
-    # Early stop
-    if patience_counter >= patience:
-        print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
-        writer.close()
-        return True
+            # Early stop
+            if patience_counter >= patience:
+                print(f'\nEpoch {epoch}: Validation Loss has not improved in {patience} epochs. Stopping training.')
+                writer.close()
+                return True
 
-    if epoch >= num_estimated_epochs:
-        # Stop at estimated epochs
-        writer.close()
-        return True
+            if epoch >= num_estimated_epochs:
+                # Stop at estimated epochs
+                writer.close()
+                return True
 
     print('Training completed!')
     writer.close()
     return False
 
 
-def training_manager(epochs_per_session=1, progress_file='runs\progress.json'):
+def training_manager(epochs_per_session=10, progress_file='runs\progress.json'):
     """
     Manages the training schedule by automatically selecting and training
     the model with the fewest completed epochs.
@@ -473,12 +531,10 @@ def training_manager(epochs_per_session=1, progress_file='runs\progress.json'):
         try:
             with open(progress_file, 'r') as f:
                 progress = json.load(f)
-            print(f'Loaded progress from {progress_file}')
         except FileNotFoundError:
-            print(f'{progress_file} not found. Initializing new progress tracker.')
             progress = {name: {'progress': 0, 'done': False} for name in MODEL_CONFIGURATIONS.keys()}
 
-        print('Current training status:', progress)
+        print('Current training status:', progress, '\n')
 
         #  Select the model with the least training
         if all(details['done'] for details in progress.values()):
@@ -493,7 +549,7 @@ def training_manager(epochs_per_session=1, progress_file='runs\progress.json'):
         # Check if any unfinished models exist and find the one with min progress
         if unfinished_models:
             model_to_train = min(unfinished_models, key=lambda model: unfinished_models[model]['progress'])
-            print(f'Model with least progress to train next: {model_to_train}')
+            print(f'Model with least progress to train next: {model_to_train}\n')
         else:
             print('All models are done. No models to train.')
             print('')
@@ -569,8 +625,6 @@ if __name__ == '__main__':
     # --- Hardware Parameters ---
     hardware_params.add_argument('--device', type=str, default=None,
                                  help='Device to use: cpu, cuda, or xpu (auto-selects if None).')
-    hardware_params.add_argument('--gradient_checkpointing', action='store_true',
-                                 help='Enable gradient checkpointing to save memory at the cost of speed.')
     hardware_params.add_argument('--dtype', type=str, default='float32',
                                  help='Datatype of the model. (float32, bfloat16, or float16).')
     hardware_params.add_argument('--attention_implementation', type=str, default='sdpa',
@@ -617,7 +671,6 @@ if __name__ == '__main__':
             attention_implementation=args.attention_implementation,
             model_dtype=args.dtype,
             compile_model=args.compile,
-            gradient_checkpointing=args.gradient_checkpointing,
             device=args.device,
             model_name=args.model_name,
             runs_path=args.runs_path,
