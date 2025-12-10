@@ -593,7 +593,7 @@ if __name__ == '__main__':
     run_params = parser.add_argument_group('Run Management Parameters')
 
     # --- Training Parameters ---
-    train_params.add_argument('--num_epochs', type=int,
+    train_params.add_argument('--num_epochs', type=int, default=1,
                               help='Number of epochs for this training session.')
     train_params.add_argument('--batch_size', type=int, default=4,
                               help='Number of samples per batch.')
