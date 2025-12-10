@@ -194,7 +194,7 @@ class NetworkConfig:
 
 def train(
         # Training Hyperparameters
-        num_epochs: int, batch_size: int = 4,
+        num_epochs: int=10, batch_size: int = 4,
         learning_rate: float = 1e-4, lr_scheduler: str = 'cosine',
         num_estimated_epochs: int = 100,
         patience: int = 4,
@@ -217,7 +217,7 @@ def train(
 
         # Other parameters
         model_name: str = 'Phi-3_Model',
-        checkpointing_per_epochs: int = 10,
+        checkpointing_per_epochs: int = 1,
         runs_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
         config=None,
         debug: bool = False,
@@ -607,6 +607,10 @@ if __name__ == '__main__':
                               help='Epochs to wait for validation loss improvement before stopping.')
     train_params.add_argument('--accumulation_steps', type=int, default=4,
                               help='Number of steps to accumulate gradients before an optimizer update.')
+    train_params.add_argument('--warmup_steps', type=int, default=128,
+                              help='Number of steps for the learning rate warmup phase.')
+    train_params.add_argument('--chunk_size', type=int, default=2048,
+                              help='Context window size (sequence length) for training.')
 
     # --- Dataset Parameters ---
     data_params.add_argument('--dataset_path', type=str,
@@ -625,16 +629,16 @@ if __name__ == '__main__':
     # --- Hardware Parameters ---
     hardware_params.add_argument('--device', type=str, default=None,
                                  help='Device to use: cpu, cuda, or xpu (auto-selects if None).')
-    hardware_params.add_argument('--dtype', type=str, default='float32',
+    hardware_params.add_argument('--dtype', type=str, default='bfloat16',
                                  help='Datatype of the model. (float32, bfloat16, or float16).')
-    hardware_params.add_argument('--attention_implementation', type=str, default='sdpa',
-                                 help='Attention implementation of the model. (flash_attention_2, sdpa or eager).')
+    hardware_params.add_argument('--attention_implementation', type=str, default='eager',
+                                 help='Attention implementation. (flash_attention_2, sdpa, or eager).')
 
     # Mutually exclusive group for compile for clear on/off control
     compile_group = hardware_params.add_mutually_exclusive_group()
     compile_group.add_argument('--compile', action='store_true', dest='compile',
-                               help='Compiles model for faster training. Requires compatible hardware and libraries.')
-    compile_group.add_argument('--no-compile', action='store_false', dest='compile', default=True,
+                               help='Compiles model for faster training. Requires compatible hardware.')
+    compile_group.add_argument('--no-compile', action='store_false', dest='compile', default=False,
                                help='Disable compile.')
 
     # --- Run Management Parameters ---
@@ -643,6 +647,8 @@ if __name__ == '__main__':
     run_params.add_argument('--runs_path', type=str,
                             default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs'),
                             help='Directory to save model checkpoints and logs.')
+    run_params.add_argument('--checkpointing_per_epochs', type=int, default=1,
+                            help='Save a checkpoint every N epochs.')
     run_params.add_argument('--debug', action='store_true',
                             help='Run in debug mode with a small subset of data.')
     run_params.add_argument('--training_manager', action='store_true',
@@ -654,7 +660,6 @@ if __name__ == '__main__':
     if args.training_manager:
         training_manager()
     else:
-        # Pass all the relevant arguments to the train function
         train(
             num_epochs=args.num_epochs,
             batch_size=args.batch_size,
@@ -663,6 +668,8 @@ if __name__ == '__main__':
             num_estimated_epochs=args.num_estimated_epochs,
             patience=args.patience,
             accumulation_steps=args.accumulation_steps,
+            warmup_steps=args.warmup_steps,
+            chunk_size=args.chunk_size,
             split_ratios=tuple(args.split_ratios),
             dataset_path=args.dataset_path,
             n_modulations=args.n_modulations,
@@ -674,5 +681,6 @@ if __name__ == '__main__':
             device=args.device,
             model_name=args.model_name,
             runs_path=args.runs_path,
+            checkpointing_per_epochs=args.checkpointing_per_epochs,
             debug=args.debug
         )

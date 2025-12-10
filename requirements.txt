@@ -7,3 +7,4 @@ tensorboard
 music21
 pretty_midi
 datasets
+torchinfo

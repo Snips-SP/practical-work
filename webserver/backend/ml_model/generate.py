@@ -205,7 +205,6 @@ def generate_sixteenth_notes(model, context, num_sixteenth_notes=16, window_size
             # Create a mask that ignores padding tokens.
             attention_mask = (current_context != EncodingConfig.padding_token).long()
 
-            t0 = time.time()
             context_tokens = model.generate(
                 current_context,
                 attention_mask=attention_mask,
@@ -225,7 +224,6 @@ def generate_sixteenth_notes(model, context, num_sixteenth_notes=16, window_size
             generated_token_chunks.append(new_tokens.cpu())
             # Count up how many sixteenth notes we generated
             new_sixteenth_notes += (new_tokens == EncodingConfig.time_note).sum()
-            print(f'We generated {new_sixteenth_notes} sixteenth notes in {round(time.time()-t0,3)}s')
 
     # Concatenate all generated chunks at once
     all_generated_tokens = torch.cat(generated_token_chunks, dim=1)

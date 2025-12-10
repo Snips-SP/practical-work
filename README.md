@@ -43,7 +43,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 Install the required Python packages:
 
 ```bash
-pip install transformers pypianoroll pydub matplotlib flask tensorboard music21 pretty_midi datasets
+pip install -r requirements.txt
 ```
 
 ### 5\. Install Fluidsynth
